@@ -7,7 +7,7 @@
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
-    "test": "tsx --test src/lib/poem-files.test.ts src/lib/book-library.test.ts src/lib/proofing.test.ts src/lib/poem-order.test.ts",
+    "test": "tsx --test src/lib/poem-files.test.ts src/lib/book-library.test.ts src/lib/proofing.test.ts src/lib/poem-order.test.ts src/lib/version-diff.test.ts",
     "test:e2e": "playwright test --config=playwright.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -18,6 +18,7 @@ import {
   appendBrowserPoemRevision, defaultPdfExportOptions, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, normalizePdfExportOptions, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
   type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
+import { diffWords } from './lib/version-diff';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
 type FormEntry = { name: string; structure: string; description: string; example: string };
@@ -1255,6 +1256,8 @@ function App() {
   const comparisonRevisions = comparisonRevisionIds.map((id) => revisionHistory.find((revision) => revision.id === id) ?? null);
   const comparisonTexts = comparisonRevisions.map((revision) => revision ? cleanText(revision.editorHtml) : '');
   const comparisonLines = comparisonTexts.map((text) => text.split('\n'));
+  const comparisonWordDiffs = comparisonLines.map((lines, slot) => lines.map((line, lineIndex) =>
+    diffWords(line, comparisonLines[1 - slot][lineIndex] ?? '').left));
   const comparisonTitlesMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
     && comparisonRevisions[0].title === comparisonRevisions[1].title);
   const comparisonManuscriptsMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
@@ -1501,7 +1504,11 @@ function App() {
                             {comparisonLines[slot].map((line, lineIndex) => <span
                               className={`history-diff-line ${line !== comparisonLines[1 - slot][lineIndex] ? 'changed' : ''}`}
                               key={lineIndex}
-                            ><span className="history-line-number">{lineIndex + 1}</span><span>{line || '\u00a0'}</span></span>)}
+                            ><span className="history-line-number">{lineIndex + 1}</span><span>{line
+                              ? comparisonWordDiffs[slot][lineIndex].map((segment, segmentIndex) => segment.isWord
+                                ? <mark className={`history-diff-word ${segment.changed ? 'changed' : ''}`} key={segmentIndex}>{segment.text}</mark>
+                                : <span key={segmentIndex}>{segment.text}</span>)
+                              : '\u00a0'}</span></span>)}
                             {!comparisonTexts[slot] && <span className="history-empty">This version has no manuscript text.</span>}
                           </pre>
                         </section>)}

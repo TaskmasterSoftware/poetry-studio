@@ -293,7 +293,12 @@ test('compares two saved versions without changing the active draft', async ({ p
   const firstTitleVersionId = await page.getByTestId('select-version-compare-2').locator('option').nth(2).getAttribute('value');
   await page.getByTestId('select-version-compare-2').selectOption(firstTitleVersionId!);
   await expect(page.getByTestId('version-comparison-summary')).toHaveText('Titles differ · Manuscripts differ');
-  await expect(page.getByTestId('version-comparison-manuscript-1').locator('.changed')).toContainText('Revised opening line');
+  await expect(page.getByTestId('version-comparison-manuscript-1').locator('.history-diff-line.changed')).toContainText('Revised opening line');
+  await expect(page.getByTestId('version-comparison-manuscript-1').locator('.history-diff-word.changed')).toHaveText(['Revised']);
+  await expect(page.getByTestId('version-comparison-manuscript-1').locator('.history-diff-line').nth(0).locator('.history-diff-word:not(.changed)')).toHaveText(['opening', 'line']);
+  await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-word.changed')).toHaveText(['First']);
+  await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-line').nth(0).locator('.history-diff-word:not(.changed)')).toHaveText(['opening', 'line']);
+  await expect(page.locator('.history-compare-pane h3.changed')).toHaveCount(2);
   await expect(page.locator(titleInput)).toHaveValue('Second title');
   await expect(page.locator(editor)).toContainText('Revised opening line');
 
