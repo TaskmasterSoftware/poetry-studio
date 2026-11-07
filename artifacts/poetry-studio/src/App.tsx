@@ -467,11 +467,10 @@ function App() {
       return { ...previous, [item.lineKey]: { ...current, feet } };
     });
   };
-  const exportPoem = (kind: 'txt' | 'html') => {
-    const content = kind === 'txt' ? `${title}\n\n${text}` : serializePoem(title, text, 'html', html);
-    const blob = new Blob([content], { type: kind === 'txt' ? 'text/plain' : 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'poem'}.${kind}`; anchor.click(); URL.revokeObjectURL(url);
+  const exportPoem = (kind: WritablePoemFileFormat) => {
+    const content = serializePoem(title, text, kind, html);
+    const fileName = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'poem'}.${kind}`;
+    downloadPoemFile(fileName, content, kind);
     setModal(null); setToast(`Poem exported as ${kind.toUpperCase()}`);
   };
   const applyForm = (form: FormEntry) => {
@@ -642,7 +641,7 @@ function App() {
       {modal && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
         <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
           <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
-          {modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
+          {modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
             <><div className="form-grid">
               <label><span className="field-label">Tab stop</span><select className="text-field" value={tabStops} onChange={(event) => setTabStops(event.target.value)} data-testid="select-tab-stops"><option>2 spaces</option><option>4 spaces</option><option>8 spaces</option></select></label>
               <label><span className="field-label">Editor size</span><select className="text-field" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} data-testid="settings-font-size">{[16,17,18,19,20,22,24,28].map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>
