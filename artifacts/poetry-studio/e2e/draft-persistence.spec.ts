@@ -67,6 +67,99 @@ test('keeps each draft and imported source paired through switching and reload',
   await expect(page.getByTestId('button-open-poem')).toHaveAttribute('title', new RegExp(importedFileName));
 });
 
+test('merges edits to different poems made in two open tabs', async ({ page }) => {
+  await page.goto('/');
+  await page.locator(titleInput).fill('First poem');
+  await page.locator(editor).fill('First poem original');
+  await page.getByTestId('button-new-draft').click();
+  await page.locator(titleInput).fill('Second poem');
+  await page.locator(editor).fill('Second poem original');
+  await page.getByTestId('button-save').click();
+
+  const secondTab = await page.context().newPage();
+  await secondTab.goto('/');
+  await expectDraft(secondTab, 'Second poem', ['Second poem original']);
+
+  await page.locator(draftSwitcher).selectOption({ label: 'First poem' });
+  await expectDraft(page, 'First poem', ['First poem original']);
+
+  await page.locator(titleInput).fill('First poem revised');
+  await page.locator(editor).fill('First poem saved from the first tab');
+  await page.getByTestId('button-save').click();
+  await expect(page.getByTestId('status-save')).toContainText('Saved');
+
+  await secondTab.locator(titleInput).fill('Second poem revised');
+  await secondTab.locator(editor).fill('Second poem saved from the second tab');
+  await secondTab.getByTestId('button-save').click();
+  await expect(secondTab.getByTestId('status-save')).toContainText('Saved');
+
+  await page.reload();
+  await expectDraft(page, 'First poem revised', ['First poem saved from the first tab']);
+  await secondTab.reload();
+  await expectDraft(secondTab, 'Second poem revised', ['Second poem saved from the second tab']);
+
+  const storedTitles = await page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      title: string;
+      editorHtml: string;
+    }>;
+    return stored.map(({ title, editorHtml }) => ({ title, editorHtml }));
+  });
+  expect(storedTitles).toHaveLength(2);
+  expect(storedTitles.find((draft) => draft.title === 'First poem revised')?.editorHtml)
+    .toContain('First poem saved from the first tab');
+  expect(storedTitles.find((draft) => draft.title === 'Second poem revised')?.editorHtml)
+    .toContain('Second poem saved from the second tab');
+});
+
+test('saves overlapping edits as a separate copy instead of replacing newer work', async ({ page }) => {
+  await page.goto('/');
+  await page.locator(titleInput).fill('Shared poem');
+  await page.locator(editor).fill('Original shared text');
+  await page.getByTestId('button-save').click();
+
+  const secondTab = await page.context().newPage();
+  await secondTab.goto('/');
+  await secondTab.locator(titleInput).fill('Second-tab version');
+  await secondTab.locator(editor).fill('Second-tab manuscript');
+
+  await page.evaluate(() => {
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      id: string;
+      title: string;
+      editorHtml: string;
+      source: unknown;
+      bookId?: string;
+    }>;
+    const activeId = JSON.parse(localStorage.getItem('poetry-studio-active-draft') || '""') as string;
+    const updatedDrafts = drafts.map((draft) => draft.id === activeId
+      ? { ...draft, title: 'First-tab version', editorHtml: '<p>First-tab manuscript</p>' }
+      : draft);
+    localStorage.setItem('poetry-studio-drafts', JSON.stringify(updatedDrafts));
+  });
+
+  await expect(secondTab.getByRole('status')).toHaveText(
+    'This poem changed in another tab. Your edits are still here; saving will keep both copies.',
+  );
+  await secondTab.getByTestId('button-save').click();
+  await expect(secondTab.locator(titleInput)).toHaveValue('Second-tab version (conflict copy)');
+
+  const versions = await secondTab.evaluate(() => {
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      title: string;
+      editorHtml: string;
+    }>;
+    return drafts.map(({ title, editorHtml }) => ({ title, editorHtml }));
+  });
+  expect(versions).toHaveLength(2);
+  expect(versions.find((draft) => draft.title === 'First-tab version')?.editorHtml).toContain('First-tab manuscript');
+  expect(versions.find((draft) => draft.title === 'Second-tab version (conflict copy)')?.editorHtml)
+    .toContain('Second-tab manuscript');
+
+  await secondTab.reload();
+  await expectDraft(secondTab, 'Second-tab version (conflict copy)', ['Second-tab manuscript']);
+});
+
 test('compares two saved versions without changing the active draft', async ({ page }) => {
   await page.goto('/');
 

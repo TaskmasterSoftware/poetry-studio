@@ -68,6 +68,9 @@ const initialSettings = {
 function readStorage<T>(key: string, fallback: T): T {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
 }
+function readSessionStorage<T>(key: string, fallback: T): T {
+  try { const raw = sessionStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
+}
 function readInitialSettings() {
   const saved = readStorage<Partial<typeof initialSettings> & { fontSizeUnit?: string } | null>('poetry-studio-settings', null);
   if (!saved) return initialSettings;
@@ -88,6 +91,7 @@ function readSavedPoemSource() {
 const draftsStorageKey = 'poetry-studio-drafts';
 const booksStorageKey = 'poetry-studio-books';
 const activeDraftStorageKey = 'poetry-studio-active-draft';
+const tabActiveDraftStorageKey = 'poetry-studio-tab-active-draft';
 const pdfExportOptionsStorageKey = 'poetry-studio-pdf-export-options';
 const revisionStorageKey = (draftId: string) => `poetry-studio-revisions-${draftId}`;
 const maxPoemRevisions = 20;
@@ -102,11 +106,62 @@ function readPoemRevisions(draftId: string): BrowserPoemRevision[] {
     ? saved.filter(isBrowserPoemRevision).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, maxPoemRevisions)
     : [];
 }
+function readStoredDrafts(): BrowserPoemDraft[] {
+  const saved = readStorage<unknown>(draftsStorageKey, []);
+  return Array.isArray(saved) ? saved.filter(isBrowserPoemDraft) : [];
+}
+function sameDraft(left: BrowserPoemDraft | undefined, right: BrowserPoemDraft | undefined) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+function mergeDraftChanges(
+  baseDrafts: BrowserPoemDraft[],
+  localDrafts: BrowserPoemDraft[],
+  storedDrafts: BrowserPoemDraft[],
+) {
+  const baseById = new Map(baseDrafts.map((draft) => [draft.id, draft]));
+  const localById = new Map(localDrafts.map((draft) => [draft.id, draft]));
+  const merged = [...storedDrafts];
+  const conflictCopies = new Map<string, string>();
+
+  for (const localDraft of localDrafts) {
+    const baseDraft = baseById.get(localDraft.id);
+    if (baseDraft && sameDraft(baseDraft, localDraft)) continue;
+
+    const storedIndex = merged.findIndex((draft) => draft.id === localDraft.id);
+    const storedDraft = storedIndex >= 0 ? merged[storedIndex] : undefined;
+    if (!baseDraft) {
+      if (!storedDraft) merged.push(localDraft);
+      continue;
+    }
+
+    if (!storedDraft || (!sameDraft(baseDraft, storedDraft) && !sameDraft(localDraft, storedDraft))) {
+      const copy: BrowserPoemDraft = {
+        ...localDraft,
+        id: createDraftId(),
+        title: `${localDraft.title || 'Untitled poem'} (conflict copy)`,
+      };
+      merged.push(copy);
+      conflictCopies.set(localDraft.id, copy.id);
+    } else if (storedIndex >= 0) {
+      merged[storedIndex] = localDraft;
+    }
+  }
+
+  for (const baseDraft of baseDrafts) {
+    if (localById.has(baseDraft.id)) continue;
+    const storedIndex = merged.findIndex((draft) => draft.id === baseDraft.id);
+    if (storedIndex < 0) continue;
+    if (sameDraft(baseDraft, merged[storedIndex])) merged.splice(storedIndex, 1);
+  }
+
+  return { drafts: merged, conflictCopies };
+}
 function loadBrowserDraftStore() {
   const savedDrafts = readStorage<unknown>(draftsStorageKey, null);
   const drafts = Array.isArray(savedDrafts) ? savedDrafts.filter(isBrowserPoemDraft) : [];
   if (drafts.length) {
-    const savedActiveId = readStorage<string>(activeDraftStorageKey, '');
+    const savedActiveId = readSessionStorage<string>(tabActiveDraftStorageKey, '')
+      || readStorage<string>(activeDraftStorageKey, '');
     return {
       drafts,
       activeDraftId: drafts.some((draft) => draft.id === savedActiveId) ? savedActiveId : drafts[0].id,
@@ -208,6 +263,8 @@ function App() {
   const booksRef = useRef(books);
   const [drafts, setDrafts] = useState(initialLibraryStore.drafts);
   const draftsRef = useRef(drafts);
+  const draftBaselineRef = useRef(initialLibraryStore.drafts);
+  const conflictRedirectsRef = useRef(new Map<string, string>());
   const [activeDraftId, setActiveDraftId] = useState(initialLibraryStore.activeDraftId);
   const [revisionHistory, setRevisionHistory] = useState(() => readPoemRevisions(initialLibraryStore.activeDraftId));
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
@@ -269,16 +326,24 @@ function App() {
       ...settings, dark: isDark, proof: proofOn, tab: tabStops, fontSize, fontFamily, fontSizeUnit: 'pt',
     }));
   }, [isDark, proofOn, settings, tabStops, fontSize, fontFamily]);
+  useEffect(() => {
+    if (localStorage.getItem(draftsStorageKey) === null) {
+      localStorage.setItem(draftsStorageKey, JSON.stringify(drafts));
+      draftBaselineRef.current = drafts;
+    }
+  }, []);
   useEffect(() => { localStorage.setItem('poetry-studio-dictionary', JSON.stringify(customWords)); }, [customWords]);
   useEffect(() => {
-    localStorage.setItem(draftsStorageKey, JSON.stringify(drafts));
     draftsRef.current = drafts;
   }, [drafts]);
   useEffect(() => {
     localStorage.setItem(booksStorageKey, JSON.stringify(books));
     booksRef.current = books;
   }, [books]);
-  useEffect(() => { localStorage.setItem(activeDraftStorageKey, JSON.stringify(activeDraftId)); }, [activeDraftId]);
+  useEffect(() => {
+    localStorage.setItem(activeDraftStorageKey, JSON.stringify(activeDraftId));
+    sessionStorage.setItem(tabActiveDraftStorageKey, JSON.stringify(activeDraftId));
+  }, [activeDraftId]);
   useEffect(() => {
     try {
       localStorage.setItem(pdfExportOptionsStorageKey, JSON.stringify(pdfExportOptions));
@@ -473,10 +538,30 @@ function App() {
   }, [focusedProofRange, html, proofOn]);
 
   const persistDraftList = useCallback((nextDrafts: BrowserPoemDraft[]) => {
-    draftsRef.current = nextDrafts;
-    setDrafts(nextDrafts);
-    localStorage.setItem(draftsStorageKey, JSON.stringify(nextDrafts));
-  }, []);
+    const latestDrafts = readStoredDrafts();
+    const merged = mergeDraftChanges(draftBaselineRef.current, nextDrafts, latestDrafts);
+    for (const [originalId, conflictId] of merged.conflictCopies) {
+      conflictRedirectsRef.current.set(originalId, conflictId);
+    }
+    draftsRef.current = merged.drafts;
+    draftBaselineRef.current = merged.drafts;
+    setDrafts(merged.drafts);
+    localStorage.setItem(draftsStorageKey, JSON.stringify(merged.drafts));
+
+    const conflictDraftId = merged.conflictCopies.get(activeDraftId);
+    if (conflictDraftId) {
+      const conflictDraft = merged.drafts.find((draft) => draft.id === conflictDraftId);
+      setActiveDraftId(conflictDraftId);
+      localStorage.setItem(activeDraftStorageKey, JSON.stringify(conflictDraftId));
+      sessionStorage.setItem(tabActiveDraftStorageKey, JSON.stringify(conflictDraftId));
+      if (conflictDraft) {
+        setTitle(conflictDraft.title);
+        if (titleRef.current) titleRef.current.value = conflictDraft.title;
+      }
+      setToast('This poem changed in another tab. Your edits were saved as a separate copy.');
+    }
+    return merged.conflictCopies;
+  }, [activeDraftId]);
 
   const persistBookList = useCallback((nextBooks: BrowserPoemBook[]) => {
     booksRef.current = nextBooks;
@@ -485,8 +570,12 @@ function App() {
   }, []);
 
   const updateDraft = useCallback((draftId: string, changes: Partial<Omit<BrowserPoemDraft, 'id'>>) => {
-    const nextDrafts = draftsRef.current.map((draft) => draft.id === draftId ? { ...draft, ...changes } : draft);
-    persistDraftList(nextDrafts);
+    const targetDraftId = conflictRedirectsRef.current.get(draftId) ?? draftId;
+    const nextDrafts = draftsRef.current.map((draft) => draft.id === targetDraftId ? { ...draft, ...changes } : draft);
+    const conflictCopies = persistDraftList(nextDrafts);
+    return conflictRedirectsRef.current.get(targetDraftId)
+      ?? conflictCopies.get(targetDraftId)
+      ?? targetDraftId;
   }, [persistDraftList]);
 
   const saveRevision = useCallback((draftId: string, revisionTitle: string, editorHtml: string) => {
@@ -508,9 +597,11 @@ function App() {
   const activateDraft = useCallback((draft: BrowserPoemDraft) => {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
+    conflictRedirectsRef.current.delete(draft.id);
     fileHandleRef.current = fileHandlesRef.current.get(draft.id) ?? null;
     setActiveDraftId(draft.id);
     localStorage.setItem(activeDraftStorageKey, JSON.stringify(draft.id));
+    sessionStorage.setItem(tabActiveDraftStorageKey, JSON.stringify(draft.id));
     const nextHistory = readPoemRevisions(draft.id);
     setRevisionHistory(nextHistory);
     setSelectedRevisionId(nextHistory[0]?.id ?? '');
@@ -528,20 +619,53 @@ function App() {
     setFocusedProofRange(null);
   }, []);
 
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== draftsStorageKey || event.newValue === null) return;
+      let latest: BrowserPoemDraft[];
+      try {
+        const parsed: unknown = JSON.parse(event.newValue);
+        latest = Array.isArray(parsed) ? parsed.filter(isBrowserPoemDraft) : [];
+      } catch {
+        return;
+      }
+      const previousActiveDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
+      const updatedActiveDraft = latest.find((draft) => draft.id === activeDraftId);
+      draftsRef.current = latest;
+      setDrafts(latest);
+
+      if (dirty && previousActiveDraft && updatedActiveDraft && !sameDraft(previousActiveDraft, updatedActiveDraft)) {
+        setToast('This poem changed in another tab. Your edits are still here; saving will keep both copies.');
+      } else if (!dirty && updatedActiveDraft) {
+        setTitle(updatedActiveDraft.title);
+        setHtml(updatedActiveDraft.editorHtml);
+        setOpenedSource(updatedActiveDraft.source);
+        savedHtml.current = updatedActiveDraft.editorHtml;
+        if (titleRef.current) titleRef.current.value = updatedActiveDraft.title;
+        if (editorRef.current) editorRef.current.innerHTML = updatedActiveDraft.editorHtml;
+      } else if (!updatedActiveDraft && latest.length && !dirty) {
+        activateDraft(latest[0]);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [activateDraft, activeDraftId, dirty]);
+
   const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML ?? html) => {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
     const currentTitle = titleRef.current?.value || title;
-    updateDraft(activeDraftId, {
+    const savedDraftId = updateDraft(activeDraftId, {
       title: currentTitle,
       editorHtml: nextHtml,
       source: openedSource,
     });
-    saveRevision(activeDraftId, currentTitle, nextHtml);
+    saveRevision(savedDraftId, titleRef.current?.value || currentTitle, nextHtml);
     savedHtml.current = nextHtml;
     setHtml(nextHtml);
     setDirty(false);
     setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+    return savedDraftId;
   }, [activeDraftId, html, openedSource, saveRevision, title, updateDraft]);
 
   const openHistory = useCallback(() => {
@@ -821,8 +945,10 @@ function App() {
         : 'Updated copy downloaded; browser draft also saved');
       return;
     }
-    persistNow(currentHtml);
-    setToast('Draft saved in this browser');
+    const savedDraftId = persistNow(currentHtml);
+    setToast(savedDraftId !== activeDraftId
+      ? 'Your edits conflicted with a newer version and were saved as a separate copy.'
+      : 'Draft saved in this browser');
   }, [html, openedSource, persistNow, title]);
 
   const onEditorInput = useCallback(() => {
@@ -832,12 +958,12 @@ function App() {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       const currentTitle = titleRef.current?.value || title;
-      updateDraft(activeDraftId, {
+      const savedDraftId = updateDraft(activeDraftId, {
         title: currentTitle,
         editorHtml: next,
         source: openedSource,
       });
-      saveRevision(activeDraftId, currentTitle, next);
+      saveRevision(savedDraftId, titleRef.current?.value || currentTitle, next);
       savedHtml.current = next; setDirty(false);
       setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
     }, 550);
@@ -887,8 +1013,8 @@ function App() {
     window.clearTimeout(titleTimer.current);
     titleTimer.current = window.setTimeout(() => {
       const currentHtml = editorRef.current?.innerHTML ?? html;
-      updateDraft(activeDraftId, { title: nextTitle, editorHtml: currentHtml, source: openedSource });
-      saveRevision(activeDraftId, nextTitle, currentHtml);
+      const savedDraftId = updateDraft(activeDraftId, { title: nextTitle, editorHtml: currentHtml, source: openedSource });
+      saveRevision(savedDraftId, titleRef.current?.value || nextTitle, currentHtml);
       setDirty(false);
       setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
     }, 550);
