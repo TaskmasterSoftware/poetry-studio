@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  appendBrowserPoemRevision, choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, readPoemFile,
+  appendBrowserPoemRevision, choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, readPoemFile, removeBrowserPoemDraft,
   restoreBrowserPoemDraft, serializeBookPdf, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
@@ -64,6 +64,16 @@ test("validates browser drafts and keeps imported source metadata attached", () 
   assert.equal(isBrowserPoemDraft({ ...importedDraft, source: { fileName: "notes.exe", format: "exe" } }), false);
   assert.equal(isBrowserPoemDraft({ ...importedDraft, source: null }), true);
   assert.equal(isBrowserPoemDraft({ ...importedDraft, editorHtml: 4 }), false);
+});
+
+test("removes only the selected browser draft", () => {
+  const drafts = [
+    { id: "draft-one", title: "First", editorHtml: "<p>First</p>", source: null },
+    { id: "draft-two", title: "Second", editorHtml: "<p>Second</p>", source: null },
+  ];
+
+  assert.deepEqual(removeBrowserPoemDraft(drafts, "draft-one"), [drafts[1]]);
+  assert.deepEqual(removeBrowserPoemDraft(drafts, "missing"), drafts);
 });
 
 test("validates and bounds local poem revision history", () => {

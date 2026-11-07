@@ -66,3 +66,36 @@ test('keeps each draft and imported source paired through switching and reload',
   await expectDraft(page, importedTitle, importedLines);
   await expect(page.getByTestId('button-open-poem')).toHaveAttribute('title', new RegExp(importedFileName));
 });
+
+test('confirms draft removal, switches safely, and keeps remaining drafts after reload', async ({ page }) => {
+  await page.goto('/');
+  await page.locator(titleInput).fill('Keep this poem');
+  await page.locator(editor).fill('Still here after reload');
+
+  await page.getByTestId('button-new-draft').click();
+  await page.locator(titleInput).fill('Remove this poem');
+  await page.locator(editor).fill('This draft will be removed');
+
+  const activeDraftBeforeCancel = await page.locator(draftSwitcher).inputValue();
+  await page.getByTestId('button-remove-draft').click();
+  await expect(page.getByRole('alertdialog')).toContainText('Remove this poem?');
+  await page.getByTestId('button-cancel-remove-draft').click();
+  await expect(page.locator(draftSwitcher)).toHaveValue(activeDraftBeforeCancel);
+  await expectDraft(page, 'Remove this poem', ['This draft will be removed']);
+
+  await page.getByTestId('button-remove-draft').click();
+  await page.getByTestId('button-confirm-remove-draft').click();
+  await expectDraft(page, 'Keep this poem', ['Still here after reload']);
+  await expect(page.locator(draftSwitcher).locator('option')).toHaveCount(1);
+
+  const storedDrafts = await page.evaluate(() => JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{ title: string }>);
+  expect(storedDrafts.map((draft) => draft.title)).toEqual(['Keep this poem']);
+  await page.reload();
+  await expectDraft(page, 'Keep this poem', ['Still here after reload']);
+
+  await page.getByTestId('button-remove-draft').click();
+  await page.getByTestId('button-confirm-remove-draft').click();
+  await expect(page.locator(draftSwitcher).locator('option')).toHaveCount(1);
+  await expect(page.locator(titleInput)).toHaveValue('Untitled poem');
+  await expect(page.locator(editor)).toBeEmpty();
+});

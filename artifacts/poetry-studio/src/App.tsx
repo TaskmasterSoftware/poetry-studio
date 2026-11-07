@@ -3,7 +3,7 @@ import {
   AlignCenter, AlignLeft, AlignRight, BookOpen, Check, CircleHelp,
   Download, Feather, FileText, FolderOpen, History, Indent, Italic, List, ListOrdered,
   Minus, Moon, PanelRight, Plus, Redo2, Search,
-  Save, Settings2, SpellCheck, Strikethrough, Sun, Type, Underline, Undo2, X,
+  Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
@@ -15,7 +15,7 @@ import {
 } from './lib/book-library';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializeBookPdf, serializePoemPdf,
-  appendBrowserPoemRevision, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, restoreBrowserPoemDraft, serializePoem, writePoemFile,
+  appendBrowserPoemRevision, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
   type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
@@ -202,7 +202,8 @@ function App() {
   const [formQuery, setFormQuery] = useState('');
   const [proofOn, setProofOn] = useState(settings.proof);
   const [dismissed, setDismissed] = useState<string[]>([]);
-  const [modal, setModal] = useState<'export' | 'settings' | 'history' | 'book-export' | null>(null);
+  const [modal, setModal] = useState<'export' | 'settings' | 'history' | 'book-export' | 'remove-draft' | null>(null);
+  const [draftToRemoveId, setDraftToRemoveId] = useState('');
   const [bookExportId, setBookExportId] = useState('');
   const [toast, setToast] = useState('');
   const [savedAt, setSavedAt] = useState(() => openedSource ? 'Draft restored · updated copy available' : 'All changes saved');
@@ -547,6 +548,41 @@ function App() {
     setSavedAt('New poem');
     setToast('New poem created');
   }, [activeBookId, activateDraft, persistDraftList, persistNow]);
+
+  const removeDraft = useCallback(() => {
+    const draft = draftsRef.current.find((item) => item.id === draftToRemoveId);
+    if (!draft) {
+      setModal(null);
+      return;
+    }
+    persistNow();
+    const remainingDrafts = removeBrowserPoemDraft(draftsRef.current, draft.id);
+    localStorage.removeItem(revisionStorageKey(draft.id));
+    fileHandlesRef.current.delete(draft.id);
+
+    if (draft.id === activeDraftId) {
+      if (remainingDrafts.length) {
+        persistDraftList(remainingDrafts);
+        activateDraft(remainingDrafts[0]);
+      } else {
+        const cleanDraft: BrowserPoemDraft = {
+          id: createDraftId(),
+          title: 'Untitled poem',
+          editorHtml: '<p><br></p>',
+          source: null,
+          bookId: draft.bookId ?? booksRef.current[0]?.id,
+        };
+        persistDraftList([cleanDraft]);
+        activateDraft(cleanDraft);
+      }
+    } else {
+      persistDraftList(remainingDrafts);
+    }
+
+    setDraftToRemoveId('');
+    setModal(null);
+    setToast(`Removed “${draft.title || 'Untitled poem'}”`);
+  }, [activeDraftId, activateDraft, draftToRemoveId, persistDraftList, persistNow]);
 
   const createBook = useCallback(() => {
     persistNow();
@@ -959,6 +995,7 @@ function App() {
             <select className="draft-switcher" aria-label="Switch browser draft" value={activeDraftId} onChange={(event) => switchDraft(event.target.value)} data-testid="select-browser-draft">
               {drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.title || 'Untitled poem'}</option>)}
             </select>
+            <button className="button ghost" onClick={() => { setDraftToRemoveId(activeDraftId); setModal('remove-draft'); }} title="Remove the selected browser draft" aria-label="Remove selected poem" data-testid="button-remove-draft"><Trash2/><span>Remove</span></button>
             <button className="button ghost" onClick={openHistory} title="View earlier saved versions" data-testid="button-version-history"><History/><span>History</span></button>
             <button className="button ghost" onClick={() => createBrowserDraft()} title="Create a new poem in the current book" aria-label="Create a new poem" data-testid="button-new-draft"><Plus/><span>New poem</span></button>
             <button className="button" onClick={openPoem} title={openedSource ? fileHandleRef.current ? `Currently open: ${openedSource.fileName}` : `Saved source: ${openedSource.fileName}; reopen it to save directly` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
@@ -1102,9 +1139,10 @@ function App() {
         </div>
       </main>
       {modal && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
-        <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
-          {modal === 'book-export' ? <><div className="panel-card">
+        <div className="dialog" role={modal === 'remove-draft' ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="dialog-title">
+          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : modal === 'remove-draft' ? 'Remove this poem?' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : modal === 'remove-draft' ? 'This removes the browser draft and its saved versions from this device.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
+          {modal === 'remove-draft' ? <><div className="panel-card"><p style={{ margin: 0 }}>Remove <strong>{drafts.find((draft) => draft.id === draftToRemoveId)?.title || 'Untitled poem'}</strong>? This cannot be undone.</p></div><div className="dialog-foot"><button className="button" onClick={() => { setDraftToRemoveId(''); setModal(null); }} data-testid="button-cancel-remove-draft">Keep poem</button><button className="button primary" onClick={removeDraft} data-testid="button-confirm-remove-draft"><Trash2/>Remove poem</button></div></> :
+          modal === 'book-export' ? <><div className="panel-card">
               <div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Download as PDF</strong><p>Choose a paper size and margins. Each poem starts on a new page; long poems continue onto additional pages.</p>{renderPdfExportOptions()}<button className="button primary" style={{ marginTop: 10 }} onClick={exportBookAsPdf} data-testid="button-download-book-pdf"><Download/>Download book PDF</button></div>
               <div className="form-item"><strong>Export book file</strong><p>Save a .poetrybook copy you can import later, including poem text and supported styling.</p><button className="button" style={{ marginTop: 10 }} onClick={exportBookArchive} data-testid="button-export-book-file"><Download/>Export .poetrybook</button></div>
             </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Done</button></div></> :

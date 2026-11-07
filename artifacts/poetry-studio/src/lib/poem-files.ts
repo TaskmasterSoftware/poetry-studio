@@ -72,6 +72,10 @@ export function restoreBrowserPoemDraft(draft: BrowserPoemDraft, revision: Brows
   return { ...draft, title: revision.title, editorHtml: revision.editorHtml };
 }
 
+export function removeBrowserPoemDraft(drafts: BrowserPoemDraft[], draftId: string): BrowserPoemDraft[] {
+  return drafts.filter((draft) => draft.id !== draftId);
+}
+
 export function isBrowserPoemDraft(value: unknown): value is BrowserPoemDraft {
   if (!value || typeof value !== 'object') return false;
   const draft = value as Partial<BrowserPoemDraft>;
