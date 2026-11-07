@@ -3,6 +3,8 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 const wordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const officeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const textNamespace = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+const styleNamespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+const foNamespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const dcNamespace = "http://purl.org/dc/elements/1.1/";
 const skippedRtfDestinations = new Set([
   "annotation", "colortbl", "datastore", "filetbl", "fonttbl", "footer",
@@ -133,74 +135,358 @@ function withoutLeadingTitle(text: string, title: string) {
   return text.startsWith(`${title}\n`) ? text.slice(title.length + 1) : text;
 }
 
-function wordNodeText(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
-  if (node.nodeType !== Node.ELEMENT_NODE) return "";
-  const element = node as Element;
-  if (element.namespaceURI === wordNamespace) {
-    if (element.localName === "t") return element.textContent || "";
-    if (element.localName === "tab") return "\t";
-    if (element.localName === "br" || element.localName === "cr") return "\n";
-    if (element.localName === "noBreakHyphen") return "\u2011";
-    if (element.localName === "softHyphen") return "";
-    if (element.localName === "delText") return "";
-    if (element.localName === "p") {
-      return `${Array.from(element.childNodes).map(wordNodeText).join("")}\n`;
-    }
-  }
-  return Array.from(element.childNodes).map(wordNodeText).join("");
+type InlineStyle = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  superscript?: boolean;
+  subscript?: boolean;
+};
+type ImportedContent = { text: string; html: string };
+type WordStyle = { parent: string; runProperties?: Element; paragraphProperties?: Element };
+type OdtStyle = {
+  parent: string;
+  inline: InlineStyle;
+  paragraph: { align?: string; left?: string; right?: string; firstLine?: string };
+};
+
+function directChild(element: Element | null | undefined, namespace: string, localName: string) {
+  return Array.from(element?.childNodes || []).find((child) =>
+    child.nodeType === Node.ELEMENT_NODE
+    && (child as Element).namespaceURI === namespace
+    && (child as Element).localName === localName,
+  ) as Element | undefined;
 }
 
-export async function readDocx(file: File): Promise<{ title: string; text: string }> {
+function wordAttribute(element: Element | null | undefined, name: string) {
+  return element?.getAttributeNS(wordNamespace, name) || "";
+}
+
+function enabledWordProperty(properties: Element, name: string): boolean | undefined {
+  const property = directChild(properties, wordNamespace, name);
+  if (!property) return undefined;
+  const value = wordAttribute(property, "val").toLowerCase();
+  return !["0", "false", "off", "none"].includes(value);
+}
+
+function wordInlineProperties(properties?: Element): InlineStyle {
+  if (!properties) return {};
+  const result: InlineStyle = {};
+  for (const [property, key] of [
+    ["b", "bold"], ["i", "italic"], ["u", "underline"], ["strike", "strike"],
+  ] as const) {
+    const enabled = enabledWordProperty(properties, property);
+    if (enabled !== undefined) result[key] = enabled;
+  }
+  if (directChild(properties, wordNamespace, "dstrike")) result.strike = enabledWordProperty(properties, "dstrike");
+  const vertical = wordAttribute(directChild(properties, wordNamespace, "vertAlign"), "val");
+  if (vertical === "superscript") result.superscript = true;
+  if (vertical === "subscript") result.subscript = true;
+  if (vertical === "baseline") {
+    result.superscript = false;
+    result.subscript = false;
+  }
+  return result;
+}
+
+function mergeInlineStyles(...styles: InlineStyle[]): InlineStyle {
+  return Object.assign({}, ...styles);
+}
+
+function wordStyleMap(stylesDocument?: XMLDocument) {
+  const styles = new Map<string, WordStyle>();
+  if (!stylesDocument) return styles;
+  for (const style of Array.from(stylesDocument.getElementsByTagNameNS(wordNamespace, "style"))) {
+    const id = wordAttribute(style, "styleId");
+    if (!id) continue;
+    styles.set(id, {
+      parent: wordAttribute(directChild(style, wordNamespace, "basedOn"), "val"),
+      runProperties: directChild(style, wordNamespace, "rPr"),
+      paragraphProperties: directChild(style, wordNamespace, "pPr"),
+    });
+  }
+  return styles;
+}
+
+function resolvedWordInlineStyle(
+  styleId: string,
+  styles: Map<string, WordStyle>,
+  visited = new Set<string>(),
+): InlineStyle {
+  if (!styleId || visited.has(styleId)) return {};
+  visited.add(styleId);
+  const style = styles.get(styleId);
+  return style
+    ? mergeInlineStyles(
+      resolvedWordInlineStyle(style.parent, styles, visited),
+      wordInlineProperties(directChild(style.runProperties, wordNamespace, "rPr") || style.runProperties),
+    )
+    : {};
+}
+
+function wordRunStyle(properties: Element | undefined, styles: Map<string, WordStyle>): InlineStyle {
+  const styleId = wordAttribute(directChild(properties, wordNamespace, "rStyle"), "val");
+  return mergeInlineStyles(
+    resolvedWordInlineStyle(styleId, styles),
+    wordInlineProperties(properties),
+  );
+}
+
+function wrappedInlineHtml(html: string, style: InlineStyle) {
+  const tags = [
+    style.bold ? "strong" : "",
+    style.italic ? "em" : "",
+    style.underline ? "u" : "",
+    style.strike ? "s" : "",
+    style.superscript ? "sup" : "",
+    style.subscript ? "sub" : "",
+  ].filter(Boolean);
+  return tags.reduceRight((content, tag) => `<${tag}>${content}</${tag}>`, html);
+}
+
+function wordInlineContent(node: Node, styles: Map<string, WordStyle>, inherited: InlineStyle = {}): ImportedContent {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent || "";
+    if (/^\s*[\r\n]\s*$/u.test(text)) return { text: "", html: "" };
+    return { text, html: escapeXml(text) };
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return { text: "", html: "" };
+  const element = node as Element;
+  if (element.namespaceURI === wordNamespace) {
+    if (element.localName === "t") {
+      const text = element.textContent || "";
+      return { text, html: escapeXml(text) };
+    }
+    if (element.localName === "tab") return { text: "\t", html: "\t" };
+    if (element.localName === "br" || element.localName === "cr") return { text: "\n", html: "<br>" };
+    if (element.localName === "noBreakHyphen") return { text: "\u2011", html: "\u2011" };
+    if (element.localName === "softHyphen" || element.localName === "delText" || element.localName === "rPr") {
+      return { text: "", html: "" };
+    }
+    if (element.localName === "r") {
+      const properties = directChild(element, wordNamespace, "rPr");
+      const style = wordRunStyle(properties, styles);
+      const content = Array.from(element.childNodes)
+        .filter((child) => !(child.nodeType === Node.ELEMENT_NODE
+          && (child as Element).namespaceURI === wordNamespace
+          && (child as Element).localName === "rPr"))
+        .map((child) => wordInlineContent(child, styles, mergeInlineStyles(inherited, style)));
+      const result = { text: content.map((part) => part.text).join(""), html: content.map((part) => part.html).join("") };
+      return { ...result, html: wrappedInlineHtml(result.html, style) };
+    }
+  }
+  const content = Array.from(element.childNodes).map((child) => wordInlineContent(child, styles, inherited));
+  return { text: content.map((part) => part.text).join(""), html: content.map((part) => part.html).join("") };
+}
+
+function wordParagraphStyle(paragraph: Element, styles: Map<string, WordStyle>) {
+  const paragraphProperties = directChild(paragraph, wordNamespace, "pPr");
+  const styleId = wordAttribute(directChild(paragraphProperties, wordNamespace, "pStyle"), "val");
+  const declarations: string[] = [];
+  const chain: WordStyle[] = [];
+  const visited = new Set<string>();
+  let current = styleId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const style = styles.get(current);
+    if (!style) break;
+    chain.unshift(style);
+    current = style.parent;
+  }
+  chain.push({ parent: "", paragraphProperties });
+  let align = "";
+  let left: number | undefined;
+  let right: number | undefined;
+  let firstLine: number | undefined;
+  let hanging: number | undefined;
+  for (const style of chain) {
+    const props = style.paragraphProperties;
+    const jc = wordAttribute(directChild(props, wordNamespace, "jc"), "val");
+    if (["left", "center", "right", "both", "distribute"].includes(jc)) {
+      align = jc === "both" || jc === "distribute" ? "justify" : jc;
+    }
+    const indent = directChild(props, wordNamespace, "ind");
+    const parseTwips = (attribute: string) => {
+      const raw = wordAttribute(indent, attribute);
+      if (!/^-?\d{1,6}$/.test(raw)) return undefined;
+      return Math.max(-20000, Math.min(20000, Number(raw)));
+    };
+    left = parseTwips("left") ?? parseTwips("start") ?? left;
+    right = parseTwips("right") ?? parseTwips("end") ?? right;
+    firstLine = parseTwips("firstLine") ?? firstLine;
+    hanging = parseTwips("hanging") ?? hanging;
+  }
+  if (align) declarations.push(`text-align:${align}`);
+  if (left !== undefined) declarations.push(`margin-left:${left / 20}pt`);
+  if (right !== undefined) declarations.push(`margin-right:${right / 20}pt`);
+  const indent = firstLine !== undefined ? firstLine : hanging !== undefined ? -hanging : undefined;
+  if (indent !== undefined) declarations.push(`text-indent:${indent / 20}pt`);
+  return declarations.length ? ` style="${declarations.join(";")}"` : "";
+}
+
+function importedParagraphs(paragraphs: ImportedContent[], title: string) {
+  const content = title && paragraphs[0]?.text === title ? paragraphs.slice(1) : paragraphs;
+  const rawText = paragraphs.map((paragraph) => paragraph.text).join("\n").replace(/\n+$/, "");
+  return {
+    text: withoutLeadingTitle(rawText.replace(/\u00a0/g, " "), title),
+    editorHtml: content.map((paragraph) => paragraph.html).join(""),
+  };
+}
+
+export async function readDocx(file: File): Promise<{ title: string; text: string; editorHtml: string }> {
   try {
     const archive = unzipSync(new Uint8Array(await file.arrayBuffer()));
     const document = parseXml(zippedXml(archive, "word/document.xml", "Word"), "Word");
     const body = document.getElementsByTagNameNS(wordNamespace, "body")[0];
     if (!body) throw new Error("This Word document has no readable document body.");
     const title = metadataTitle(archive);
-    const text = Array.from(body.childNodes)
-      .map(wordNodeText)
-      .join("")
-      .replace(/\u00a0/g, " ")
-      .replace(/\n+$/, "");
-    return { title, text: withoutLeadingTitle(text, title) };
+    const styles = wordStyleMap(archive["word/styles.xml"]
+      ? parseXml(strFromU8(archive["word/styles.xml"]), "Word styles")
+      : undefined);
+    const paragraphs = Array.from(body.getElementsByTagNameNS(wordNamespace, "p")).map((paragraph) => {
+      const content = Array.from(paragraph.childNodes)
+        .filter((child) => !(child.nodeType === Node.ELEMENT_NODE
+          && (child as Element).namespaceURI === wordNamespace
+          && (child as Element).localName === "pPr"))
+        .map((child) => wordInlineContent(child, styles));
+      return {
+        text: content.map((part) => part.text).join(""),
+        html: `<p${wordParagraphStyle(paragraph, styles)}>${content.map((part) => part.html).join("") || "<br>"}</p>`,
+      };
+    });
+    const imported = importedParagraphs(paragraphs, title);
+    return { title, text: imported.text, editorHtml: imported.editorHtml };
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("This ")) throw error;
     throw new Error("Could not read this Word document. Try saving it as .docx and opening it again.");
   }
 }
 
-function odtNodeText(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
-  if (node.nodeType !== Node.ELEMENT_NODE) return "";
-  const element = node as Element;
-  if (element.namespaceURI === textNamespace) {
-    if (element.localName === "line-break") return "\n";
-    if (element.localName === "tab") return "\t";
-    if (element.localName === "s") {
-      const count = Math.min(1000, Math.max(1, Number(element.getAttributeNS(textNamespace, "c")) || 1));
-      return " ".repeat(count);
+function odtStyleMap(documents: XMLDocument[]) {
+  const styles = new Map<string, OdtStyle>();
+  const attribute = (element: Element | null | undefined, namespace: string, name: string) =>
+    element?.getAttributeNS(namespace, name) || "";
+  for (const document of documents) {
+    for (const style of Array.from(document.getElementsByTagNameNS(styleNamespace, "style"))) {
+      const name = style.getAttributeNS(styleNamespace, "name");
+      if (!name) continue;
+      const textProperties = directChild(style, styleNamespace, "text-properties");
+      const paragraphProperties = directChild(style, styleNamespace, "paragraph-properties");
+      const inline: InlineStyle = {};
+      const weight = attribute(textProperties, foNamespace, "font-weight").toLowerCase();
+      const fontStyle = attribute(textProperties, foNamespace, "font-style").toLowerCase();
+      const underline = attribute(textProperties, styleNamespace, "text-underline-style").toLowerCase();
+      const strike = attribute(textProperties, styleNamespace, "text-line-through-style").toLowerCase();
+      if (weight) inline.bold = weight === "bold" || Number(weight) >= 600;
+      if (fontStyle) inline.italic = fontStyle === "italic" || fontStyle === "oblique";
+      if (underline) inline.underline = underline !== "none";
+      if (strike) inline.strike = strike !== "none";
+      const position = attribute(textProperties, styleNamespace, "text-position").toLowerCase();
+      if (position.startsWith("super")) inline.superscript = true;
+      if (position.startsWith("sub")) inline.subscript = true;
+      const align = attribute(paragraphProperties, foNamespace, "text-align").toLowerCase();
+      styles.set(name, {
+        parent: attribute(style, styleNamespace, "parent-style-name"),
+        inline,
+        paragraph: {
+          align,
+          left: attribute(paragraphProperties, foNamespace, "margin-left") || undefined,
+          right: attribute(paragraphProperties, foNamespace, "margin-right") || undefined,
+          firstLine: attribute(paragraphProperties, foNamespace, "text-indent") || undefined,
+        },
+      });
     }
-    const content = Array.from(element.childNodes).map(odtNodeText).join("");
-    if (element.localName === "p" || element.localName === "h") return `${content}\n`;
-    return content;
   }
-  return Array.from(element.childNodes).map(odtNodeText).join("");
+  return styles;
 }
 
-export async function readOdt(file: File): Promise<{ title: string; text: string }> {
+function resolvedOdtStyle(name: string, styles: Map<string, OdtStyle>, visited = new Set<string>()): OdtStyle {
+  if (!name || visited.has(name)) return { parent: "", inline: {}, paragraph: {} };
+  visited.add(name);
+  const style = styles.get(name);
+  if (!style) return { parent: "", inline: {}, paragraph: {} };
+  const parent = resolvedOdtStyle(style.parent, styles, visited);
+  return {
+    parent: "",
+    inline: mergeInlineStyles(parent.inline, style.inline),
+    paragraph: { ...parent.paragraph, ...style.paragraph },
+  };
+}
+
+function safeOdtMeasure(value?: string) {
+  return value && /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:cm|mm|in|pt|pc|px)$/i.test(value.trim())
+    ? value.trim()
+    : "";
+}
+
+function odtParagraphStyle(paragraph: Element, styles: Map<string, OdtStyle>) {
+  const styleName = paragraph.getAttributeNS(textNamespace, "style-name") || "";
+  const paragraphStyle = resolvedOdtStyle(styleName, styles).paragraph;
+  const declarations: string[] = [];
+  const alignment = (paragraphStyle.align || "").toLowerCase();
+  const align = alignment === "start" ? "left" : alignment === "end" ? "right" : alignment;
+  if (["left", "right", "center", "justify"].includes(align)) declarations.push(`text-align:${align}`);
+  const left = safeOdtMeasure(paragraphStyle.left);
+  const right = safeOdtMeasure(paragraphStyle.right);
+  const firstLine = safeOdtMeasure(paragraphStyle.firstLine);
+  if (left) declarations.push(`margin-left:${left}`);
+  if (right) declarations.push(`margin-right:${right}`);
+  if (firstLine) declarations.push(`text-indent:${firstLine}`);
+  return declarations.length ? ` style="${declarations.join(";")}"` : "";
+}
+
+function odtInlineContent(node: Node, styles: Map<string, OdtStyle>, inherited: InlineStyle = {}): ImportedContent {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent || "";
+    if (/^\s*[\r\n]\s*$/u.test(text)) return { text: "", html: "" };
+    return { text, html: escapeXml(text) };
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return { text: "", html: "" };
+  const element = node as Element;
+  if (element.namespaceURI === textNamespace) {
+    if (element.localName === "line-break") return { text: "\n", html: "<br>" };
+    if (element.localName === "tab") return { text: "\t", html: "\t" };
+    if (element.localName === "s") {
+      const count = Math.min(1000, Math.max(1, Number(element.getAttributeNS(textNamespace, "c")) || 1));
+      const text = " ".repeat(count);
+      return { text, html: text };
+    }
+    if (element.localName === "p" || element.localName === "h") return { text: "", html: "" };
+    const styleName = element.getAttributeNS(textNamespace, "style-name");
+    const inlineStyle = styleName ? resolvedOdtStyle(styleName, styles).inline : {};
+    const content = Array.from(element.childNodes)
+      .map((child) => odtInlineContent(child, styles, mergeInlineStyles(inherited, inlineStyle)));
+    const result = { text: content.map((part) => part.text).join(""), html: content.map((part) => part.html).join("") };
+    return element.localName === "span" && styleName
+      ? { ...result, html: wrappedInlineHtml(result.html, inlineStyle) }
+      : result;
+  }
+  const content = Array.from(element.childNodes).map((child) => odtInlineContent(child, styles, inherited));
+  return { text: content.map((part) => part.text).join(""), html: content.map((part) => part.html).join("") };
+}
+
+export async function readOdt(file: File): Promise<{ title: string; text: string; editorHtml: string }> {
   try {
     const archive = unzipSync(new Uint8Array(await file.arrayBuffer()));
     const document = parseXml(zippedXml(archive, "content.xml", "OpenDocument"), "OpenDocument");
     const body = document.getElementsByTagNameNS(officeNamespace, "text")[0];
     if (!body) throw new Error("This OpenDocument file has no readable text body.");
     const title = metadataTitle(archive);
-    const text = Array.from(body.childNodes)
-      .map(odtNodeText)
-      .join("")
-      .replace(/\u00a0/g, " ")
-      .replace(/\n+$/, "");
-    return { title, text: withoutLeadingTitle(text, title) };
+    const documents = [document];
+    if (archive["styles.xml"]) documents.push(parseXml(strFromU8(archive["styles.xml"]), "OpenDocument styles"));
+    const styles = odtStyleMap(documents);
+    const paragraphs = Array.from(body.getElementsByTagNameNS(textNamespace, "*"))
+      .filter((paragraph) => paragraph.localName === "p" || paragraph.localName === "h")
+      .map((paragraph) => {
+        const content = Array.from(paragraph.childNodes).map((child) => odtInlineContent(child, styles));
+        return {
+          text: content.map((part) => part.text).join(""),
+          html: `<p${odtParagraphStyle(paragraph, styles)}>${content.map((part) => part.html).join("") || "<br>"}</p>`,
+        };
+      });
+    const imported = importedParagraphs(paragraphs, title);
+    return { title, text: imported.text, editorHtml: imported.editorHtml };
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("This ")) throw error;
     throw new Error("Could not read this OpenDocument file. Try saving it as .odt and opening it again.");

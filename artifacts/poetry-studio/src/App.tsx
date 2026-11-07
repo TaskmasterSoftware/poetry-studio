@@ -325,9 +325,12 @@ function App() {
     localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
     setDirty(false);
     const isOfficeDocument = poem.format === 'rtf' || poem.format === 'docx' || poem.format === 'odt';
-    setSavedAt(isOfficeDocument ? 'Imported as editable text' : 'Opened from device');
+    const keepsBasicStyling = poem.format === 'docx' || poem.format === 'odt';
+    setSavedAt(isOfficeDocument ? (keepsBasicStyling ? 'Imported with basic styling' : 'Imported as editable text') : 'Opened from device');
     setToast(isOfficeDocument
-      ? `Opened ${poem.fileName} as editable text; saving keeps its text and title`
+      ? keepsBasicStyling
+        ? `Opened ${poem.fileName} with supported styling; saving keeps its text and title`
+        : `Opened ${poem.fileName} as editable text; saving keeps its text and title`
       : `Opened ${poem.fileName}`);
   }, []);
 

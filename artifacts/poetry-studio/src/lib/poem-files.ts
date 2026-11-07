@@ -124,13 +124,15 @@ function markdownToText(source: string) {
 
 export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
   const format = fileFormat(file.name);
-  let extracted: { title: string; text: string };
+  let extracted: { title: string; text: string; editorHtml?: string };
   let editorHtml: string | undefined;
 
   if (format === 'docx') {
     extracted = await readDocx(file);
+    editorHtml = extracted.editorHtml;
   } else if (format === 'odt') {
     extracted = await readOdt(file);
+    editorHtml = extracted.editorHtml;
   } else {
     const source = await file.text();
     if (format === 'rtf') {
