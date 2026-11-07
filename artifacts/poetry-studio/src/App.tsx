@@ -890,6 +890,33 @@ function App() {
     const range = browserSelection?.rangeCount ? browserSelection.getRangeAt(0) : null;
     if (editor && range && editor.contains(range.commonAncestorContainer)) {
       savedEditorRange.current = range.cloneRange();
+      const focusNode = browserSelection?.focusNode;
+      if (focusNode && editor.contains(focusNode)) {
+        let focusElement: Element | null = focusNode.nodeType === Node.ELEMENT_NODE
+          ? focusNode as Element
+          : focusNode.parentElement;
+        if (focusNode.nodeType === Node.ELEMENT_NODE) {
+          const children = focusNode.childNodes;
+          const childIndex = Math.max(0, Math.min(browserSelection?.focusOffset ?? 0, children.length - 1));
+          const child = children[childIndex];
+          if (child?.nodeType === Node.ELEMENT_NODE) focusElement = child as Element;
+        }
+        if (focusElement && editor.contains(focusElement)) {
+          const computed = window.getComputedStyle(focusElement);
+          const currentSize = Number.parseFloat(computed.fontSize) * 0.75;
+          if (Number.isFinite(currentSize)) {
+            const nearestSize = fontSizeOptions.reduce((nearest, candidate) =>
+              Math.abs(candidate - currentSize) < Math.abs(nearest - currentSize) ? candidate : nearest,
+            fontSizeOptions[0]);
+            setToolbarFontSize(nearestSize);
+          }
+          const normalizeFamily = (family: string) =>
+            family.split(',')[0].trim().replace(/["']/g, '').toLowerCase();
+          const currentFamily = normalizeFamily(computed.fontFamily);
+          const matchingFont = fontFamilies.find((font) => normalizeFamily(font.value) === currentFamily);
+          if (matchingFont) setToolbarFontFamily(matchingFont.value);
+        }
+      }
     }
     const selected = browserSelection?.toString().trim() || '';
     if (selected) { setSelection(selected); setRhymeQuery(selected.split(/\s+/).pop()?.replace(/[^\p{L}'-]/gu, '') || ''); }
