@@ -417,6 +417,24 @@ test("exports PDF emphasis and paragraph alignment while keeping plain text styl
   assert.doesNotMatch(pdf, /BT \/F1 11 Tf 0 Tw 72 668 Td/);
 });
 
+test("exports PDF paragraph indents and leaves unindented paragraphs unchanged", async () => {
+  enableXmlDom();
+  const longText = "A first-line indent applies only to the opening line, then the paragraph continues without that extra space.";
+  const editorHtml = '<p style="margin-left:18pt">Left</p><p style="text-align:right;margin-right:18pt">Right</p><p>Plain</p>'
+    + `<p style="text-indent:9pt">${longText}</p>`;
+  const pdf = await serializePoemPdf(
+    "Indented poem",
+    `Left\nRight\nPlain\n${longText}`,
+    editorHtml,
+  ).text();
+
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 90 683 Td <4C656674>/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 494\.5 668 Td <5269676874>/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 653 Td <506C61696E>/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 81 638 Td </);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 623 Td </);
+});
+
 test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => {
   enableXmlDom();
   const title = "Night rain";

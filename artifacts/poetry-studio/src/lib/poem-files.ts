@@ -374,6 +374,16 @@ const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> 
 };
 const pdfMarginPoints: Record<PdfMarginPreset, number> = { narrow: 36, standard: 72, wide: 90 };
 
+function cssMeasureToPdfPoints(value: string | undefined) {
+  const match = value?.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))(pt|in|cm|mm|px|pc)$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const pointsPerUnit: Record<string, number> = {
+    pt: 1, in: 72, cm: 72 / 2.54, mm: 72 / 25.4, px: 0.75, pc: 12,
+  };
+  return amount * pointsPerUnit[match[2].toLowerCase()];
+}
+
 function pdfLayout(options: PdfExportOptions) {
   const { width, height } = pdfPageDimensions[options.pageSize];
   const margin = pdfMarginPoints[options.margins];
@@ -451,19 +461,21 @@ function appendStyledPdfLine(
   layout: ReturnType<typeof pdfLayout>,
   align: 'left' | 'center' | 'right' | 'justify' | undefined,
   justify: boolean,
+  lineLeft: number,
+  lineRight: number,
 ) {
   const totalText = runs.map((run) => run.text).join('');
   const lineWidth = approximatePdfTextWidth(totalText, 11);
-  const availableWidth = layout.contentWidth;
+  const availableWidth = lineRight - lineLeft;
   const wordSpaces = (totalText.match(/ /g) || []).length;
   const wordSpacing = justify && wordSpaces > 0
     ? Math.max(0, (availableWidth - lineWidth) / wordSpaces)
     : 0;
   let x = align === 'center'
-    ? layout.margin + availableWidth / 2 - lineWidth / 2
+    ? lineLeft + availableWidth / 2 - lineWidth / 2
     : align === 'right'
-      ? layout.width - layout.margin - lineWidth
-      : layout.margin;
+      ? lineRight - lineWidth
+      : lineLeft;
 
   for (const run of runs) {
     const font = pdfFont(run.style);
@@ -504,10 +516,20 @@ function buildPdf(title: string, text: string, editorHtml: string | undefined, o
       y -= 12;
       continue;
     }
-    for (const paragraphLine of paragraphLines) {
-      const wrappedLines = wrapPdfRuns(paragraphLine, layout.bodyCharacters);
+    const leftIndent = cssMeasureToPdfPoints(paragraph.left);
+    const rightIndent = cssMeasureToPdfPoints(paragraph.right);
+    const firstLineIndent = cssMeasureToPdfPoints(paragraph.firstLine);
+    for (const [paragraphLineIndex, paragraphLine] of paragraphLines.entries()) {
+      const isFirstParagraphLine = paragraphLineIndex === 0;
+      const firstLineOffset = isFirstParagraphLine ? firstLineIndent : 0;
+      const availableWidth = layout.contentWidth - leftIndent - rightIndent - firstLineOffset;
+      const maxCharacters = Math.max(1, Math.floor(availableWidth / 5.5));
+      const wrappedLines = wrapPdfRuns(paragraphLine, maxCharacters);
       for (const [wrappedLineIndex, lineRuns] of wrappedLines.entries()) {
         if (y < layout.margin) addPage();
+        const lineLeft = layout.margin + leftIndent
+          + (isFirstParagraphLine && wrappedLineIndex === 0 ? firstLineIndent : 0);
+        const lineRight = layout.width - layout.margin - rightIndent;
         appendStyledPdfLine(
           pages[pages.length - 1],
           lineRuns,
@@ -515,6 +537,8 @@ function buildPdf(title: string, text: string, editorHtml: string | undefined, o
           layout,
           paragraph.align,
           paragraph.align === 'justify' && wrappedLineIndex < wrappedLines.length - 1,
+          lineLeft,
+          lineRight,
         );
         y -= 15;
       }
