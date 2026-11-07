@@ -180,6 +180,12 @@
 .poem-title { min-width: 0; flex: 1; overflow: hidden; font: 12px var(--app-font-serif, Georgia, serif); text-overflow: ellipsis; white-space: nowrap; }
 .is-selected .poem-title { color: #f4e2da; }
 .poem-current { flex: 0 0 auto; color: #d2a093; font: 8px var(--app-font-mono, monospace); letter-spacing: .04em; text-transform: uppercase; }
+.poem-order-tools { display:flex; flex:none; gap:0; opacity:.7; transition:opacity .16s ease; }
+.shelf-poem:hover .poem-order-tools,.shelf-poem:focus-within .poem-order-tools { opacity:1; }
+.poem-order-tools button { width:18px; height:24px; display:grid; place-items:center; padding:0; border:0; border-radius:3px; background:transparent; color:#a9bbb0; }
+.poem-order-tools button:hover:not(:disabled) { background:#ffffff12; color:#f0d3c9; }
+.poem-order-tools button:disabled { opacity:.24; cursor:not-allowed; }
+.poem-order-tools svg { width:11px; height:11px; }
 
 .move-poem-label { position: relative; width: 24px; height: 26px; flex: 0 0 24px; color: #91a69a; }
 .move-poem-label select { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; opacity: 0; cursor: pointer; }

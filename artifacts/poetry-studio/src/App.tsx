@@ -9,6 +9,7 @@ import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShel
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import { findGrammarSuggestions, type GrammarSuggestion } from './lib/proofing';
+import { reorderPoemsInBook, type PoemOrderDirection } from './lib/poem-order';
 import {
   downloadBookBundle, normalizeBookLibrary, readBookBundle, serializeBookBundle, type BrowserPoemBook,
 } from './lib/book-library';
@@ -593,6 +594,15 @@ function App() {
     setToast(`Moved “${poem.title || 'Untitled poem'}” to ${booksRef.current.find((book) => book.id === targetBookId)?.title}`);
   }, [persistDraftList, persistNow]);
 
+  const reorderPoem = useCallback((poemId: string, direction: PoemOrderDirection) => {
+    const currentDrafts = draftsRef.current;
+    const reorderedDrafts = reorderPoemsInBook(currentDrafts, poemId, direction);
+    if (reorderedDrafts === currentDrafts) return;
+    persistDraftList(reorderedDrafts);
+    const poem = reorderedDrafts.find((draft) => draft.id === poemId);
+    if (poem) setToast(`Moved “${poem.title || 'Untitled poem'}” ${direction === 'up' ? 'up' : 'down'} in its book`);
+  }, [persistDraftList]);
+
   const openBookExport = useCallback((bookId: string) => {
     setBookExportId(bookId);
     setModal('book-export');
@@ -933,6 +943,7 @@ function App() {
           onCreatePoem={createBrowserDraft}
           onRenameBook={renameBook}
           onMovePoem={movePoem}
+          onReorderPoem={reorderPoem}
           onExportBook={openBookExport}
           onImportBook={beginBookImport}
         />

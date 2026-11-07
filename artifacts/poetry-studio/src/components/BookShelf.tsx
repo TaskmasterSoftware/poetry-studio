@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
-  BookMarked, BookOpen, Check, ChevronDown, Download, FilePlus2, FolderPlus, Import, MoreHorizontal,
+  ArrowDown, ArrowUp, BookMarked, BookOpen, Check, ChevronDown, Download, FilePlus2, FolderPlus, Import, MoreHorizontal,
   Pencil, Plus, X,
 } from 'lucide-react';
+import type { PoemOrderDirection } from '../lib/poem-order';
 import './BookShelf.css';
 
 export type ShelfBook = { id: string; title: string; poemCount: number };
@@ -29,6 +30,7 @@ export type BookShelfProps = {
   onCreatePoem: (bookId: string) => void;
   onRenameBook: (bookId: string, title: string) => void;
   onMovePoem: (poemId: string, bookId: string) => void;
+  onReorderPoem: (poemId: string, direction: PoemOrderDirection) => void;
   onExportBook: (bookId: string) => void;
   onImportBook: () => void;
 };
@@ -43,6 +45,7 @@ export default function BookShelf({
   onCreatePoem,
   onRenameBook,
   onMovePoem,
+  onReorderPoem,
   onExportBook,
   onImportBook,
 }: BookShelfProps) {
@@ -201,7 +204,7 @@ export default function BookShelf({
 
                 {isActiveBook && <span className="current-book-label"><span />Current book</span>}
                 <div className="book-poems" id={`book-poems-${book.id}`} hidden={isCollapsed}>
-                  {bookPoems.length ? bookPoems.map((poem) => {
+                  {bookPoems.length ? bookPoems.map((poem, poemIndex) => {
                     const selected = poem.id === activePoemId;
                     return (
                       <div className={`shelf-poem${selected ? ' is-selected' : ''}`} key={poem.id} data-testid={`shelf-poem-${poem.id}`}>
@@ -217,6 +220,26 @@ export default function BookShelf({
                           <span className="poem-title" title={poem.title}>{poem.title}</span>
                           {selected && <span className="poem-current">Current</span>}
                         </button>
+                        {bookPoems.length > 1 && (
+                          <div className="poem-order-tools" role="group" aria-label={`Reorder ${poem.title}`}>
+                            <button
+                              type="button"
+                              disabled={poemIndex === 0}
+                              onClick={() => onReorderPoem(poem.id, 'up')}
+                              aria-label={`Move ${poem.title} up`}
+                              title="Move poem up"
+                              data-testid={`button-move-poem-up-${poem.id}`}
+                            ><ArrowUp aria-hidden="true" /></button>
+                            <button
+                              type="button"
+                              disabled={poemIndex === bookPoems.length - 1}
+                              onClick={() => onReorderPoem(poem.id, 'down')}
+                              aria-label={`Move ${poem.title} down`}
+                              title="Move poem down"
+                              data-testid={`button-move-poem-down-${poem.id}`}
+                            ><ArrowDown aria-hidden="true" /></button>
+                          </div>
+                        )}
                         {books.length > 1 && (
                           <label className="move-poem-label">
                             <span className="sr-only">Move {poem.title} to another book</span>
