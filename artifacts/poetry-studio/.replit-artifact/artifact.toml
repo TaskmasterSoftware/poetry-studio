@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Poetry Studio"
+description = "A desktop-style writing workspace for poets, with rich text and paragraph formatting, live line and word counts, rhyme and half-rhyme search, scansion marks, poetic-form references, and proofreading tools."
+version = "1.0.0"
+id = "artifacts/poetry-studio"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20864
+
+[services.development]
+run = "pnpm --filter @workspace/poetry-studio run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/poetry-studio", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/poetry-studio/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20864"
+BASE_PATH = "/"
