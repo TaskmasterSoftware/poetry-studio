@@ -160,6 +160,7 @@
 .tool:hover,.tool.selected { background:#e4e8dc; color:#31574c; }
 .tool svg { width:15px;height:15px; }
 .select-tool { border:1px solid #dfddd4; background:#f9f7f0; color:#52665e; font-size:10px; height:29px; border-radius:5px; padding:0 7px; }
+.font-family-tool { width:142px; }
 .editor-wrap { flex:1; overflow:auto; padding:28px clamp(22px,5vw,72px) 40px; }
 .paper { position:relative; max-width:760px; min-height:490px; margin:0 auto; padding:31px 36px 55px; background:#fbfaf5; border:1px solid #e8e4d9; box-shadow:0 9px 26px rgba(57,65,55,.035); border-radius:2px; }
 .poem-editor { min-height:400px; outline:none; color:#344a44; font: 19px/1.82 var(--app-font-serif); white-space:pre-wrap; overflow-wrap:anywhere; caret-color:#ae7668; }
@@ -319,6 +320,7 @@
   .toolbar { padding:8px 14px; gap:2px; }
   .tool-group { padding-right:4px;margin-right:1px; }
   .select-tool { max-width:85px; }
+  .font-family-tool { width:120px;max-width:120px; }
   .editor-wrap { padding:18px 12px 28px; }
   .paper { padding:23px 20px 38px; min-height:400px; }
   .poem-editor { font-size:18px; }

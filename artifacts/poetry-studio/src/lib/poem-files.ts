@@ -109,28 +109,59 @@ function escapeHtml(value: string) {
 
 const safeEditorTags = new Set([
   'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4',
-  'H5', 'H6', 'I', 'INS', 'LI', 'MARK', 'OL', 'P', 'PRE', 'S', 'STRIKE',
+  'H5', 'H6', 'I', 'INS', 'LI', 'MARK', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRIKE',
   'STRONG', 'SUB', 'SUP', 'U', 'UL',
+]);
+const safeEditorFontFamilies = new Set([
+  'georgia, serif',
+  '"palatino linotype", palatino, serif',
+  '"times new roman", times, serif',
+  'arial, helvetica, sans-serif',
+  'verdana, geneva, sans-serif',
+  '"courier new", courier, monospace',
+  '"trebuchet ms", sans-serif',
 ]);
 const droppedHtmlTags = new Set([
   'IFRAME', 'NOSCRIPT', 'OBJECT', 'SCRIPT', 'STYLE', 'SVG', 'TEMPLATE',
 ]);
 
+function safeEditorInlineStyle(value: string) {
+  const declarations: string[] = [];
+  for (const declaration of value.split(';')) {
+    const separator = declaration.indexOf(':');
+    if (separator < 1) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const rawValue = declaration.slice(separator + 1).trim().toLowerCase();
+    if (property === 'font-family' && safeEditorFontFamilies.has(rawValue)) {
+      declarations.push(`font-family:${rawValue}`);
+    } else if (property === 'font-size') {
+      const match = rawValue.match(/^(\d+(?:\.\d+)?)(pt|px|em|rem|%)$/);
+      if (match && Number(match[1]) > 0 && Number(match[1]) <= 144) {
+        declarations.push(`font-size:${Number(match[1])}${match[2]}`);
+      }
+    }
+  }
+  return declarations.join(';');
+}
+
 function safeEditorNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || '');
   if (node.nodeType !== Node.ELEMENT_NODE) return '';
   const element = node as HTMLElement;
-  if (droppedHtmlTags.has(element.tagName)) return '';
+  const tagName = element.tagName.toUpperCase();
+  if (droppedHtmlTags.has(tagName)) return '';
   const children = Array.from(element.childNodes).map(safeEditorNode).join('');
-  if (!safeEditorTags.has(element.tagName)) return children;
-  const tag = element.tagName.toLowerCase();
+  if (!safeEditorTags.has(tagName)) return children;
+  const tag = tagName.toLowerCase();
   if (tag === 'br') return '<br>';
-  return `<${tag}>${children}</${tag}>`;
+  const style = tagName === 'SPAN' ? safeEditorInlineStyle(element.getAttribute('style') || '') : '';
+  return `<${tag}${style ? ` style="${escapeHtml(style)}"` : ''}>${children}</${tag}>`;
 }
 
 function sanitizeEditorHtml(source: string) {
   const parsed = new DOMParser().parseFromString(source, 'text/html');
-  return Array.from(parsed.body.childNodes).map(safeEditorNode).join('');
+  const body = parsed.body || parsed.getElementsByTagName('body')[0] || parsed.documentElement;
+  return body ? Array.from(body.childNodes).map(safeEditorNode).join('') : escapeHtml(source);
 }
 
 function fileFormat(fileName: string): PoemFileFormat {

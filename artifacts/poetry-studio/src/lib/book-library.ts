@@ -42,6 +42,16 @@ function safeMeasure(value: string) {
   return `${Number(match[1])}${match[2].toLowerCase()}`;
 }
 
+const safeFontFamilies = new Set([
+  "georgia, serif",
+  "\"palatino linotype\", palatino, serif",
+  "\"times new roman\", times, serif",
+  "arial, helvetica, sans-serif",
+  "verdana, geneva, sans-serif",
+  "\"courier new\", courier, monospace",
+  "\"trebuchet ms\", sans-serif",
+]);
+
 function safeStyle(value: string) {
   const declarations: string[] = [];
   for (const declaration of value.split(";")) {
@@ -64,6 +74,8 @@ function safeStyle(value: string) {
       normalized = rawValue;
     } else if (property === "font-size" && safeMeasure(rawValue)) {
       normalized = safeMeasure(rawValue);
+    } else if (property === "font-family" && safeFontFamilies.has(rawValue)) {
+      normalized = rawValue;
     }
     if (normalized) declarations.push(`${property}:${normalized}`);
   }

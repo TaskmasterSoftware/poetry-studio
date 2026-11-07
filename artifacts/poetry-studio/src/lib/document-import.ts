@@ -49,6 +49,8 @@ export type ExportInlineStyle = {
   strike?: boolean;
   superscript?: boolean;
   subscript?: boolean;
+  fontFamily?: string;
+  fontSize?: string;
 };
 export type ExportRun = { text: string; style: ExportInlineStyle };
 export type ExportParagraph = {
@@ -64,6 +66,15 @@ export type ExportParagraph = {
 
 const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "OL", "P", "PRE", "UL"]);
 const editorInlineTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "DEL", "SUP", "SUB"]);
+const exportFontFamilies = new Set([
+  "georgia, serif",
+  "\"palatino linotype\", palatino, serif",
+  "\"times new roman\", times, serif",
+  "arial, helvetica, sans-serif",
+  "verdana, geneva, sans-serif",
+  "\"courier new\", courier, monospace",
+  "\"trebuchet ms\", sans-serif",
+]);
 
 function mergeExportStyles(...styles: ExportInlineStyle[]): ExportInlineStyle {
   return Object.assign({}, ...styles);
@@ -97,6 +108,12 @@ function editorInlineStyle(element: Element, inherited: ExportInlineStyle): Expo
       if (value === "super") style.superscript = true;
       if (value === "sub") style.subscript = true;
     }
+    if (property === "font-family" && exportFontFamilies.has(value)) style.fontFamily = value;
+    if (property === "font-size") {
+      const size = safeCssMeasure(value);
+      const amount = Number.parseFloat(size);
+      if (size && amount > 0 && amount <= 144) style.fontSize = size;
+    }
   }
   return style;
 }
@@ -114,6 +131,15 @@ function cssMeasureToTwips(value: string) {
     pt: 1, in: 72, cm: 72 / 2.54, mm: 72 / 25.4, px: 0.75, pc: 12,
   };
   return Math.round(amount * pointsPerUnit[match[2].toLowerCase()] * 20);
+}
+
+function firstFontName(value: string) {
+  return value.split(",")[0].trim().replace(/^["']|["']$/g, "");
+}
+
+function fontSizeHalfPoints(value: string) {
+  const twips = cssMeasureToTwips(value);
+  return twips === undefined ? undefined : Math.round(twips / 10);
 }
 
 function editorParagraphStyle(element: Element): Pick<ExportParagraph, "align" | "left" | "right" | "firstLine"> {
@@ -267,7 +293,11 @@ function runsPlainText(runs: ExportRun[]) {
 }
 
 function docxRun(run: ExportRun) {
+  const fontName = run.style.fontFamily ? firstFontName(run.style.fontFamily) : "";
+  const fontSize = run.style.fontSize ? fontSizeHalfPoints(run.style.fontSize) : undefined;
   const properties = [
+    fontName ? `<w:rFonts w:ascii="${escapeXml(validXmlText(fontName))}" w:hAnsi="${escapeXml(validXmlText(fontName))}"/>` : "",
+    fontSize !== undefined ? `<w:sz w:val="${fontSize}"/><w:szCs w:val="${fontSize}"/>` : "",
     run.style.bold ? "<w:b/>" : "",
     run.style.italic ? "<w:i/>" : "",
     run.style.underline ? '<w:u w:val="single"/>' : "",
@@ -335,6 +365,8 @@ function odtInlineStyles(paragraphs: ExportParagraph[]) {
   const names = new Map(entries.map(([key], index) => [key, `PoemText${index + 1}`]));
   const xml = entries.map(([key, style]) => {
     const properties = [
+      style.fontFamily ? `style:font-name="${escapeXml(validXmlText(firstFontName(style.fontFamily)))}"` : "",
+      style.fontSize ? `fo:font-size="${escapeXml(style.fontSize)}"` : "",
       style.bold ? 'fo:font-weight="bold"' : "",
       style.italic ? 'fo:font-style="italic"' : "",
       style.underline ? 'style:text-underline-style="solid"' : "",
@@ -458,8 +490,12 @@ function asBlob(bytes: Uint8Array, type: string) {
   return new Blob([copy], { type });
 }
 
-function rtfRun(run: ExportRun) {
+function rtfRun(run: ExportRun, fontIds: Map<string, number>) {
+  const fontId = run.style.fontFamily ? fontIds.get(run.style.fontFamily) : undefined;
+  const fontSize = run.style.fontSize ? fontSizeHalfPoints(run.style.fontSize) : undefined;
   const controls = [
+    fontId !== undefined ? `\\f${fontId}` : "",
+    fontSize !== undefined ? `\\fs${fontSize}` : "",
     run.style.bold ? "\\b" : "",
     run.style.italic ? "\\i" : "",
     run.style.underline ? "\\ul" : "",
@@ -473,7 +509,7 @@ function rtfRun(run: ExportRun) {
   return controls ? `{${controls} ${content}}` : content;
 }
 
-function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, number>) {
+function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, number>, fontIds: Map<string, number>) {
   const controls = [
     paragraph.listId !== undefined && paragraph.listLevel !== undefined
       ? `\\ls${listNumbers.get(paragraph.listId) || 1}\\ilvl${paragraph.listLevel}`
@@ -495,7 +531,7 @@ function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, numbe
       return value === undefined ? "" : `\\fi${value}`;
     })() : "",
   ].filter(Boolean).join("");
-  const content = `${controls ? `{${controls} ` : ""}${paragraph.runs.map(rtfRun).join("")}`;
+  const content = `${controls ? `{${controls} ` : ""}${paragraph.runs.map((run) => rtfRun(run, fontIds)).join("")}`;
   return `${content}${controls ? "\\par}" : "\\par"}\n`;
 }
 
@@ -529,8 +565,18 @@ export function serializeRtf(title: string, text: string, editorHtml?: string) {
   const visibleTitle = title.trim() ? `{\\b ${rtfText(title)}}\\par\n` : "";
   const paragraphs = editorParagraphs(editorHtml, text);
   const lists = rtfListTables(paragraphs);
+  const fontNames = Array.from(new Set([
+    "georgia, serif",
+    ...paragraphs.flatMap((paragraph) => paragraph.runs
+      .map((run) => run.style.fontFamily)
+      .filter((family): family is string => Boolean(family))),
+  ]));
+  const fontIds = new Map(fontNames.map((family, index) => [family, index]));
+  const fontTable = `{\\fonttbl${fontNames.map((family, index) =>
+    `{\\f${index}\\fnil\\fcharset0 ${rtfText(firstFontName(family))};}`,
+  ).join("")}}`;
   return new Blob(
-    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${titleInfo}${lists.tables}\n${visibleTitle}${paragraphs.map((paragraph) => rtfParagraph(paragraph, lists.listNumbers)).join("")}}`],
+    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${fontTable}${titleInfo}${lists.tables}\n${visibleTitle}${paragraphs.map((paragraph) => rtfParagraph(paragraph, lists.listNumbers, fontIds)).join("")}}`],
     { type: "application/rtf" },
   );
 }

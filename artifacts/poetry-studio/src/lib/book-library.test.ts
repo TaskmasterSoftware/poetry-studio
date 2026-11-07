@@ -97,9 +97,10 @@ test("book PDF starts each poem on a separate page", async () => {
 
 test("book HTML sanitizer removes active content and preserves supported style", () => {
   const sanitized = sanitizeBookEditorHtml(
-    '<p style="text-align:center; background-image:url(javascript:bad())" onmouseover="bad()"><em>Line</em><iframe src="evil"></iframe></p>',
+    '<p style="text-align:center; font-family:Georgia, serif; font-size:12pt; background-image:url(javascript:bad())" onmouseover="bad()"><span style=\'font-family:"Palatino Linotype", Palatino, serif; font-size:14pt\'><em>Line</em></span><iframe src="evil"></iframe></p>',
   );
-  assert.match(sanitized, /style="text-align:center"/);
+  assert.match(sanitized, /style="text-align:center;font-family:georgia, serif;font-size:12pt"/);
+  assert.match(sanitized, /font-family:&quot;palatino linotype&quot;, palatino, serif;font-size:14pt/);
   assert.match(sanitized, /<em>Line<\/em>/);
   assert.doesNotMatch(sanitized, /javascript|onmouseover|iframe/i);
 });

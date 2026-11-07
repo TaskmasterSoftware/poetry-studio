@@ -320,6 +320,19 @@ test("serializes RTF with escaped structural characters and unicode", async () =
   assert.ok(imported.editorHtml.includes("A \\ line — 🌧"));
 });
 
+test("HTML export keeps supported font family and point size while rejecting unsafe font styles", () => {
+  enableXmlDom();
+  const html = serializePoem(
+    "Styled poem",
+    "Styled text",
+    "html",
+    '<p><span style="font-family:Georgia, serif;font-size:14pt">Styled text</span><span style="font-family:MadeUp; font-size:expression(alert(1))"> plain</span></p>',
+  ) as string;
+
+  assert.match(html, /style="font-family:georgia, serif;font-size:14pt"/);
+  assert.doesNotMatch(html, /MadeUp|expression|alert/i);
+});
+
 test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and readable punctuation", async () => {
   const pdf = serializePoemPdf("Night rain — bright", "First bright line\nSecond line\n\nLast line");
   assert.equal(pdf.type, "application/pdf");
@@ -394,7 +407,7 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   enableXmlDom();
   const title = "Night rain";
   const text = "First bright\n\nLast";
-  const editorHtml = '<p style="text-align:center;margin-left:18pt;text-indent:9pt"><strong>First</strong> <em><u>bright</u></em></p><p><br/></p><p><span style="font-weight:700;font-style:italic">Last</span></p>';
+  const editorHtml = '<p style="text-align:center;margin-left:18pt;text-indent:9pt"><strong>First</strong> <em><u>bright</u></em></p><p><br/></p><p><span style="font-weight:700;font-style:italic;font-family:Georgia, serif;font-size:14pt">Last</span></p>';
 
   const docx = serializePoem(title, text, "docx", editorHtml) as Blob;
   const docxArchive = unzipSync(new Uint8Array(await docx.arrayBuffer()));
@@ -405,6 +418,8 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   assert.match(docxXml, /<w:b\/>/);
   assert.match(docxXml, /<w:i\/>/);
   assert.match(docxXml, /<w:u w:val="single"\/>/);
+  assert.match(docxXml, /<w:rFonts w:ascii="georgia" w:hAnsi="georgia"\/>/);
+  assert.match(docxXml, /<w:sz w:val="28"\/>/);
   const importedDocx = await readPoemFile(new File([docx], "night-rain.docx"));
   assert.equal(importedDocx.title, title);
   assert.equal(importedDocx.text, text);
@@ -418,6 +433,8 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   assert.match(rtfText, /\\fi180/);
   assert.match(rtfText, /\\b First/);
   assert.match(rtfText, /\\i\\ul bright/);
+  assert.match(rtfText, /\\fs28/);
+  assert.match(rtfText, /\\f0/);
   const importedRtf = readRtf(rtfText);
   assert.equal(importedRtf.title, title);
   assert.equal(importedRtf.text, text);
@@ -431,6 +448,8 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   assert.match(odtXml, /fo:text-indent="9pt"/);
   assert.match(odtXml, /fo:font-weight="bold"/);
   assert.match(odtXml, /fo:font-style="italic"/);
+  assert.match(odtXml, /style:font-name="georgia"/);
+  assert.match(odtXml, /fo:font-size="14pt"/);
   assert.match(odtXml, /style:text-underline-style="solid"/);
   const importedOdt = await readPoemFile(new File([odt], "night-rain.odt"));
   assert.equal(importedOdt.title, title);

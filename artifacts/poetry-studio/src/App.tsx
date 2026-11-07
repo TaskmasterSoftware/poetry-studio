@@ -44,10 +44,42 @@ const forms: FormEntry[] = [
   { name: 'Acrostic', structure: 'lines spell a word or phrase', description: 'The first, middle, or last letters of successive lines form a name, message, or key word.', example: 'initial letters read downward' },
   { name: 'Free verse', structure: 'open form · no fixed scheme', description: 'Line, breath, image, and sound make the architecture. Repetition can supply a pulse without a meter.', example: 'follow the music of the sentence' },
 ];
-const initialSettings = { proof: true, scansion: false, forms: false, dark: false, fontSize: 19, tab: '4 spaces' };
+const fontFamilies = [
+  { label: 'Georgia', value: 'Georgia, serif' },
+  { label: 'Palatino', value: '"Palatino Linotype", Palatino, serif' },
+  { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { label: 'Courier New', value: '"Courier New", Courier, monospace' },
+  { label: 'Trebuchet MS', value: '"Trebuchet MS", sans-serif' },
+] as const;
+type FontFamily = typeof fontFamilies[number]['value'];
+const fontSizeOptions = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
+const initialSettings = {
+  proof: true,
+  scansion: false,
+  forms: false,
+  dark: false,
+  fontSize: 14,
+  fontFamily: fontFamilies[0].value,
+  tab: '4 spaces',
+};
 
 function readStorage<T>(key: string, fallback: T): T {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
+}
+function readInitialSettings() {
+  const saved = readStorage<Partial<typeof initialSettings> & { fontSizeUnit?: string } | null>('poetry-studio-settings', null);
+  if (!saved) return initialSettings;
+  const storedSize = Number(saved.fontSize);
+  const sizeInPoints = Number.isFinite(storedSize)
+    ? saved.fontSizeUnit === 'pt' ? storedSize : storedSize * 0.75
+    : initialSettings.fontSize;
+  const fontSize = fontSizeOptions.reduce((nearest, candidate) =>
+    Math.abs(candidate - sizeInPoints) < Math.abs(nearest - sizeInPoints) ? candidate : nearest,
+  fontSizeOptions[0]);
+  const fontFamily = fontFamilies.find((font) => font.value === saved.fontFamily)?.value ?? initialSettings.fontFamily;
+  return { ...initialSettings, ...saved, fontSize, fontFamily };
 }
 function readSavedPoemSource() {
   const source = readStorage<unknown>('poetry-studio-source', null);
@@ -188,11 +220,12 @@ function App() {
   const fileHandleRef = useRef<WritablePoemFileHandle | null>(null);
   const fileHandlesRef = useRef(new Map<string, WritablePoemFileHandle>());
   const savedHtml = useRef('');
+  const savedEditorRange = useRef<Range | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
   const [title, setTitle] = useState(() => initialLibraryStore.drafts.find((draft) => draft.id === initialLibraryStore.activeDraftId)?.title ?? 'The harbor at first light');
   const [html, setHtml] = useState(() => initialLibraryStore.drafts.find((draft) => draft.id === initialLibraryStore.activeDraftId)?.editorHtml ?? starter);
-  const [settings, setSettings] = useState(() => readStorage('poetry-studio-settings', initialSettings));
+  const [settings, setSettings] = useState(readInitialSettings);
   const [customWords, setCustomWords] = useState<string[]>(() => readStorage('poetry-studio-dictionary', []));
   const [activeTool, setActiveTool] = useState<Tool>('rhymes');
   const [selection, setSelection] = useState('');
@@ -212,6 +245,9 @@ function App() {
   const [isDark, setIsDark] = useState(settings.dark);
   const [tabStops, setTabStops] = useState(settings.tab);
   const [fontSize, setFontSize] = useState(settings.fontSize);
+  const [fontFamily, setFontFamily] = useState(settings.fontFamily);
+  const [toolbarFontSize, setToolbarFontSize] = useState(settings.fontSize);
+  const [toolbarFontFamily, setToolbarFontFamily] = useState(settings.fontFamily);
   const [formLabel, setFormLabel] = useState('Free verse');
   const [ignoredGrammar, setIgnoredGrammar] = useState<string[]>([]);
   const [focusedProofRange, setFocusedProofRange] = useState<{ start: number; end: number } | null>(null);
@@ -226,8 +262,10 @@ function App() {
   }, []);
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
-    localStorage.setItem('poetry-studio-settings', JSON.stringify({ ...settings, dark: isDark, proof: proofOn, tab: tabStops, fontSize }));
-  }, [isDark, proofOn, settings, tabStops, fontSize]);
+    localStorage.setItem('poetry-studio-settings', JSON.stringify({
+      ...settings, dark: isDark, proof: proofOn, tab: tabStops, fontSize, fontFamily, fontSizeUnit: 'pt',
+    }));
+  }, [isDark, proofOn, settings, tabStops, fontSize, fontFamily]);
   useEffect(() => { localStorage.setItem('poetry-studio-dictionary', JSON.stringify(customWords)); }, [customWords]);
   useEffect(() => {
     localStorage.setItem(draftsStorageKey, JSON.stringify(drafts));
@@ -847,12 +885,88 @@ function App() {
   }, [activeDraftId, html, openedSource, saveRevision, updateDraft]);
 
   const captureSelection = useCallback(() => {
-    const selected = window.getSelection()?.toString().trim() || '';
+    const editor = editorRef.current;
+    const browserSelection = window.getSelection();
+    const range = browserSelection?.rangeCount ? browserSelection.getRangeAt(0) : null;
+    if (editor && range && editor.contains(range.commonAncestorContainer)) {
+      savedEditorRange.current = range.cloneRange();
+    }
+    const selected = browserSelection?.toString().trim() || '';
     if (selected) { setSelection(selected); setRhymeQuery(selected.split(/\s+/).pop()?.replace(/[^\p{L}'-]/gu, '') || ''); }
   }, []);
   const format = useCallback((command: string, value?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, value);
+    onEditorInput();
+  }, [onEditorInput]);
+  const applyTextStyle = useCallback((property: 'fontSize' | 'fontFamily', value: string) => {
+    const editor = editorRef.current;
+    const previousRange = savedEditorRange.current;
+    const hasEditorRange = Boolean(editor && previousRange && editor.contains(previousRange.commonAncestorContainer));
+    const range = hasEditorRange ? previousRange! : null;
+    const selectedFontFamily = property === 'fontFamily'
+      ? fontFamilies.find((font) => font.value === value)?.value
+      : undefined;
+    if (property === 'fontFamily' && !selectedFontFamily) return;
+    const styleValue = selectedFontFamily ?? value;
+
+    if (editor) {
+      editor.focus({ preventScroll: true });
+      if (range) {
+        const browserSelection = window.getSelection();
+        browserSelection?.removeAllRanges();
+        browserSelection?.addRange(range.cloneRange());
+      }
+    }
+
+    if (!editor || !range || range.collapsed) {
+      if (property === 'fontSize') {
+        const nextSize = Number.parseFloat(styleValue);
+        setFontSize(nextSize);
+        setToolbarFontSize(nextSize);
+      } else {
+        setFontFamily(selectedFontFamily!);
+        setToolbarFontFamily(selectedFontFamily!);
+      }
+      return;
+    }
+
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === Node.TEXT_NODE && range.intersectsNode(node)) textNodes.push(node as Text);
+    }
+
+    const formattedSpans: HTMLSpanElement[] = [];
+    for (const textNode of textNodes) {
+      const start = range.startContainer === textNode ? range.startOffset : 0;
+      const end = range.endContainer === textNode ? range.endOffset : textNode.length;
+      if (end <= start) continue;
+      const selectedLength = end - start;
+      const selectedNode = start > 0 ? textNode.splitText(start) : textNode;
+      if (selectedLength < selectedNode.length) selectedNode.splitText(selectedLength);
+      const span = document.createElement('span');
+      span.style[property] = styleValue;
+      selectedNode.parentNode?.insertBefore(span, selectedNode);
+      span.appendChild(selectedNode);
+      formattedSpans.push(span);
+    }
+
+    const firstText = formattedSpans[0]?.firstChild;
+    const lastText = formattedSpans.at(-1)?.firstChild;
+    if (firstText?.nodeType === Node.TEXT_NODE && lastText?.nodeType === Node.TEXT_NODE) {
+      const nextRange = document.createRange();
+      nextRange.setStart(firstText, 0);
+      nextRange.setEnd(lastText, lastText.textContent?.length ?? 0);
+      const browserSelection = window.getSelection();
+      browserSelection?.removeAllRanges();
+      browserSelection?.addRange(nextRange);
+      savedEditorRange.current = nextRange.cloneRange();
+    }
+
+    if (property === 'fontSize') setToolbarFontSize(Number.parseFloat(styleValue));
+    else setToolbarFontFamily(selectedFontFamily!);
     onEditorInput();
   }, [onEditorInput]);
   const chooseTool = (tool: Tool) => {
@@ -1024,8 +1138,11 @@ function App() {
                 <select className="select-tool" aria-label="Paragraph style" defaultValue="p" onChange={(event) => format('formatBlock', event.target.value)} data-testid="select-paragraph">
                   <option value="p">Paragraph</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="blockquote">Quote</option>
                 </select>
-                <select className="select-tool" aria-label="Font size" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} data-testid="select-font-size">
-                  {[16, 17, 18, 19, 20, 22, 24, 28].map((size) => <option key={size} value={size}>{size}px</option>)}
+                <select className="select-tool font-family-tool" aria-label="Font family" value={toolbarFontFamily} onChange={(event) => applyTextStyle('fontFamily', event.target.value)} data-testid="select-font-family">
+                  {fontFamilies.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
+                </select>
+                <select className="select-tool" aria-label="Font size" value={toolbarFontSize} onChange={(event) => applyTextStyle('fontSize', `${event.target.value}pt`)} data-testid="select-font-size">
+                  {fontSizeOptions.map((size) => <option key={size} value={size}>{size} pt</option>)}
                 </select>
               </div>
               <div className="tool-group">
@@ -1075,7 +1192,7 @@ function App() {
                   onMouseUp={captureSelection}
                   onBlur={captureSelection}
                   onKeyDown={(event) => { if (event.key === 'Tab') { event.preventDefault(); insertTab(); } }}
-                  style={{ fontSize, tabSize: tabStops === '2 spaces' ? 2 : tabStops === '8 spaces' ? 8 : 4 }}
+                  style={{ fontSize: `${fontSize}pt`, fontFamily, tabSize: tabStops === '2 spaces' ? 2 : tabStops === '8 spaces' ? 8 : 4 }}
                   data-testid="editor-manuscript"
                 />
               </div>
@@ -1223,7 +1340,8 @@ function App() {
           modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>Choose a paper size and margins for a fixed-layout copy.</p>{renderPdfExportOptions()}<button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
             <><div className="form-grid">
               <label><span className="field-label">Tab stop</span><select className="text-field" value={tabStops} onChange={(event) => setTabStops(event.target.value)} data-testid="select-tab-stops"><option>2 spaces</option><option>4 spaces</option><option>8 spaces</option></select></label>
-              <label><span className="field-label">Editor size</span><select className="text-field" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} data-testid="settings-font-size">{[16,17,18,19,20,22,24,28].map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>
+              <label><span className="field-label">Default text size</span><select className="text-field" value={fontSize} onChange={(event) => { const nextSize = Number(event.target.value); setFontSize(nextSize); setToolbarFontSize(nextSize); }} data-testid="settings-font-size">{fontSizeOptions.map((size) => <option key={size} value={size}>{size} pt</option>)}</select></label>
+              <label><span className="field-label">Default font</span><select className="text-field" value={fontFamily} onChange={(event) => { const nextFont = fontFamilies.find((font) => font.value === event.target.value)?.value; if (nextFont) { setFontFamily(nextFont); setToolbarFontFamily(nextFont); } }} data-testid="settings-font-family">{fontFamilies.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
               <label><span className="field-label">Theme</span><button className="button" onClick={() => setIsDark((old) => !old)}>{isDark ? <Sun/> : <Moon/>}{isDark ? 'Paper light' : 'Deep green'}</button></label>
               <label><span className="field-label">Personal dictionary</span><button className="button" onClick={() => { setCustomWords([]); setToast('Personal dictionary cleared'); }}>{customWords.length} words · clear</button></label>
             </div><div className="dialog-foot"><button className="button primary" onClick={() => setModal(null)} data-testid="button-settings-done"><Check/>Done</button></div></>}
