@@ -179,6 +179,7 @@
 .scan-syllable:focus-visible,.scan-foot:focus-visible { outline:2px solid #a07669; outline-offset:2px; border-radius:3px; }
 ::highlight(poetry-spelling) { text-decoration: underline wavy #c45d57; text-underline-offset: 3px; }
 ::highlight(poetry-grammar) { text-decoration: underline wavy #719b75; text-underline-offset: 3px; }
+::highlight(poetry-proof-focus) { background-color:#f1d781; color:#38321f; border-radius:2px; }
 .editor-footer { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:13px clamp(20px,5vw,72px); border-top:1px solid #e2dfd6; background:#f7f5ee; color:#7c8980; font:9px var(--app-font-mono); }
 .count-set { display:flex; gap:20px; }
 .count-set b { color:#42594f; font-weight:500; }
@@ -214,6 +215,11 @@
 .proof-item { border-left:2px solid #c57e6e; padding:7px 8px; background:#f5f2e9; border-radius:0 4px 4px 0; }
 .proof-item.grammar { border-color:#7aa282; }
 .proof-item strong { color:#465b51; font:12px var(--app-font-serif); }
+.proof-target { width:100%; min-width:0; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+.proof-target strong { min-width:0; flex:1; overflow-wrap:anywhere; }
+.proof-target span { flex:none; color:#71877a; font:8px var(--app-font-mono); }
+.proof-target:hover strong { text-decoration:underline; text-decoration-color:#7aa282; text-underline-offset:3px; }
+.proof-target:focus-visible { outline:2px solid #7aa282; outline-offset:2px; border-radius:2px; }
 .proof-item p { margin:4px 0 0; color:#78877e; font-size:9px; line-height:1.45; }
 .proof-actions { display:flex; gap:5px; margin-top:7px; }
 .spell-underline { text-decoration:underline wavy #bd6f66; text-decoration-thickness:1px; text-underline-offset:3px; }

@@ -8,6 +8,7 @@ import {
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
+import { findGrammarSuggestions, type GrammarSuggestion } from './lib/proofing';
 import {
   downloadBookBundle, normalizeBookLibrary, readBookBundle, serializeBookBundle, type BrowserPoemBook,
 } from './lib/book-library';
@@ -111,6 +112,53 @@ function cleanText(html: string) {
   };
   return Array.from(node.childNodes).map(readNode).join('').replace(/\u00a0/g, ' ').replace(/\n+$/, '');
 }
+type TextPoint = { node: Text; offset: number } | null;
+function createEditorTextRange(editor: HTMLElement, start: number, end: number): Range | null {
+  const flatten = (current: Node): { text: string; points: TextPoint[] } => {
+    if (current.nodeType === Node.TEXT_NODE) {
+      const original = current.textContent || '';
+      return {
+        text: original.replace(/\u00a0/g, ' '),
+        points: Array.from({ length: original.length }, (_, offset) => ({ node: current as Text, offset })),
+      };
+    }
+    if (current.nodeType !== Node.ELEMENT_NODE) return { text: '', points: [] };
+    const element = current as HTMLElement;
+    if (element.tagName === 'BR') return { text: '\n', points: [null] };
+    const children = Array.from(element.childNodes).map(flatten);
+    const text = children.map((child) => child.text).join('');
+    const points = children.flatMap((child) => child.points);
+    if (/^(P|DIV|LI|H[1-6]|BLOCKQUOTE)$/.test(element.tagName)) {
+      if (element.tagName === 'P' && text === '\n') return { text: '\n', points: [null] };
+      return { text: `${text}\n`, points: [...points, null] };
+    }
+    return { text, points };
+  };
+
+  const mapped = Array.from(editor.childNodes).map(flatten);
+  const text = mapped.map((part) => part.text).join('');
+  const points = mapped.flatMap((part) => part.points);
+  let textLength = text.length;
+  while (textLength > 0 && text[textLength - 1] === '\n') {
+    textLength -= 1;
+    points.pop();
+  }
+  if (start < 0 || end > textLength || start >= end) return null;
+
+  let first: Exclude<TextPoint, null> | null = null;
+  let last: Exclude<TextPoint, null> | null = null;
+  for (let index = start; index < end; index += 1) {
+    if (points[index]) {
+      first ??= points[index];
+      last = points[index];
+    }
+  }
+  if (!first || !last) return null;
+  const range = document.createRange();
+  range.setStart(first.node, first.offset);
+  range.setEnd(last.node, last.offset + 1);
+  return range;
+}
 function wordsOf(text: string): string[] { return text.trim().match(/\b[\w’'-]+\b/g) ?? []; }
 function lineSyllables(text: string) { return wordsOf(text).reduce((total, word) => total + syllables(word), 0); }
 function syllables(word: string) {
@@ -120,27 +168,6 @@ function syllables(word: string) {
   const groups = clean.replace(/(?:[^laeiouy]e|ed|es)$/i, '').match(/[aeiouy]{1,2}/g);
   return Math.max(1, groups?.length || 1);
 }
-function findGrammar(text: string) {
-  const suggestions: { match: string; fix: string; reason: string }[] = [];
-  for (const match of text.matchAll(/\b(the|a|an)\s+\1\b/gi)) {
-    suggestions.push({ match: match[0], fix: match[0].split(/\s+/)[0], reason: 'A repeated article may be accidental.' });
-  }
-  for (const match of text.matchAll(/\byour welcome\b/gi)) {
-    suggestions.push({ match: match[0], fix: match[0].replace(/^your/i, 'You’re'), reason: '“You’re welcome” uses the contraction for “you are.”' });
-  }
-  for (const match of text.matchAll(/\b(it|that|there) is\b/gi)) {
-    const contraction = match[0].replace(/\s+is$/i, '’s');
-    suggestions.push({ match: match[0], fix: contraction, reason: `Consider the contraction ${contraction}.` });
-  }
-  for (const match of text.matchAll(/\b(could|should|would|might|must) of\b/gi)) {
-    suggestions.push({ match: match[0], fix: match[0].replace(/\s+of$/i, ' have'), reason: 'After a modal verb, use “have” rather than “of.”' });
-  }
-  for (const match of text.matchAll(/\b(\w+)\s+\1\b/gi)) {
-    suggestions.push({ match: match[0], fix: match[1], reason: 'A repeated word may be accidental.' });
-  }
-  return suggestions;
-}
-
 function App() {
   const [initialLibraryStore] = useState(loadBrowserLibraryStore);
   const [books, setBooks] = useState(initialLibraryStore.books);
@@ -184,6 +211,7 @@ function App() {
   const [fontSize, setFontSize] = useState(settings.fontSize);
   const [formLabel, setFormLabel] = useState('Free verse');
   const [ignoredGrammar, setIgnoredGrammar] = useState<string[]>([]);
+  const [focusedProofRange, setFocusedProofRange] = useState<{ start: number; end: number } | null>(null);
   const [scansionRows, setScansionRows] = useState<ScannedWord[][]>([]);
   const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
   const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
@@ -230,7 +258,7 @@ function App() {
   const scanTextLines = text.split('\n');
   const countedLineEntries = scanTextLines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim());
   const query = (rhymeQuery || selection.split(/\s+/).filter(Boolean).pop() || '').replace(/[^\p{L}'-]/gu, '');
-  const grammars = useMemo(() => findGrammar(text).filter((item) => !dismissed.includes(item.match) && !ignoredGrammar.includes(item.match)), [text, dismissed, ignoredGrammar]);
+  const grammars = useMemo(() => findGrammarSuggestions(text).filter((item) => !dismissed.includes(item.id) && !ignoredGrammar.includes(item.id)), [text, dismissed, ignoredGrammar]);
   const filteredForms = forms.filter((form) => `${form.name} ${form.structure} ${form.description}`.toLowerCase().includes(formQuery.toLowerCase()));
 
   useEffect(() => {
@@ -334,24 +362,6 @@ function App() {
       return;
     }
 
-  const rangesForPattern = (pattern: RegExp) => {
-      const ranges: Range[] = [];
-      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-      let node: Node | null;
-      while ((node = walker.nextNode())) {
-        if (!node.textContent) continue;
-        pattern.lastIndex = 0;
-        for (const match of node.textContent.matchAll(pattern)) {
-          if (match.index === undefined || !match[0]) continue;
-          const range = document.createRange();
-          range.setStart(node, match.index);
-          range.setEnd(node, match.index + match[0].length);
-          ranges.push(range);
-        }
-      }
-      return ranges;
-    };
-
     const spellingWords = new Set(spellingErrors.map((word) => word.toLowerCase()));
     const spellingRanges: Range[] = [];
     if (spellingWords.size) {
@@ -368,10 +378,9 @@ function App() {
         }
       }
     }
-    const grammarMatches = grammars.map((item) => item.match).filter((match) => match.length > 1);
-    const grammarRanges = grammarMatches.length
-      ? rangesForPattern(new RegExp(`(?:${grammarMatches.map((match) => match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi'))
-      : [];
+    const grammarRanges = grammars
+      .map((item) => createEditorTextRange(editor, item.start, item.end))
+      .filter((range): range is Range => range !== null);
 
     registry.set('poetry-spelling', new HighlightConstructor(...spellingRanges));
     registry.set('poetry-grammar', new HighlightConstructor(...grammarRanges));
@@ -380,6 +389,36 @@ function App() {
       registry.delete('poetry-grammar');
     };
   }, [html, spellingErrors, grammars, proofOn]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const registry = (window.CSS as unknown as {
+      highlights?: { set: (name: string, value: object) => void; delete: (name: string) => void };
+    }).highlights;
+    const HighlightConstructor = (window as unknown as {
+      Highlight?: new (...ranges: Range[]) => object;
+    }).Highlight;
+    if (!editor || !focusedProofRange || !proofOn) {
+      registry?.delete('poetry-proof-focus');
+      return;
+    }
+
+    const range = createEditorTextRange(editor, focusedProofRange.start, focusedProofRange.end);
+    if (!range) {
+      registry?.delete('poetry-proof-focus');
+      return;
+    }
+    if (registry && HighlightConstructor) {
+      registry.set('poetry-proof-focus', new HighlightConstructor(range));
+      return () => registry.delete('poetry-proof-focus');
+    }
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    editor.focus({ preventScroll: true });
+    return undefined;
+  }, [focusedProofRange, html, proofOn]);
 
   const persistDraftList = useCallback((nextDrafts: BrowserPoemDraft[]) => {
     draftsRef.current = nextDrafts;
@@ -432,6 +471,9 @@ function App() {
     setSavedAt(draft.source ? 'Draft restored · updated copy available' : 'All changes saved');
     setSelection('');
     setRhymeQuery('');
+    setDismissed([]);
+    setIgnoredGrammar([]);
+    setFocusedProofRange(null);
   }, []);
 
   const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML ?? html) => {
@@ -688,6 +730,7 @@ function App() {
 
   const onEditorInput = useCallback(() => {
     const next = editorRef.current?.innerHTML || '';
+    setFocusedProofRange(null);
     setHtml(next); setDirty(true); setSavedAt('Saving…');
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
@@ -702,6 +745,43 @@ function App() {
       setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
     }, 550);
   }, [activeDraftId, openedSource, saveRevision, title, updateDraft]);
+
+  const focusProofSuggestion = useCallback((item: GrammarSuggestion) => {
+    const editor = editorRef.current;
+    const range = editor ? createEditorTextRange(editor, item.start, item.end) : null;
+    if (!editor || !range) {
+      setToast('That suggestion no longer matches the poem text.');
+      return;
+    }
+    const target = range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startContainer.parentElement
+      : range.startContainer as Element;
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFocusedProofRange({ start: item.start, end: item.end });
+  }, []);
+
+  const applyProofSuggestion = useCallback((item: GrammarSuggestion) => {
+    const editor = editorRef.current;
+    const range = editor ? createEditorTextRange(editor, item.start, item.end) : null;
+    if (!editor || !range) {
+      setToast('That suggestion no longer matches the poem text.');
+      return;
+    }
+
+    range.deleteContents();
+    const replacement = document.createTextNode(item.fix);
+    range.insertNode(replacement);
+    const caret = document.createRange();
+    caret.setStartAfter(replacement);
+    caret.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
+    editor.focus({ preventScroll: true });
+    setFocusedProofRange(null);
+    setDismissed((current) => current.includes(item.id) ? current : [...current, item.id]);
+    onEditorInput();
+  }, [onEditorInput]);
 
   const onTitleChange = useCallback((nextTitle: string) => {
     setTitle(nextTitle);
@@ -947,7 +1027,16 @@ function App() {
               <div className="switch-row"><div><div className="switch-title">Proofing suggestions</div><div className="switch-desc">Local checks + browser spellcheck</div></div><button className={`switch ${proofOn ? 'on' : ''}`} role="switch" aria-checked={proofOn} aria-label="Toggle proofing" onClick={() => setProofOn((value) => !value)} data-testid="toggle-proofing"/></div>
               <div className="notice" style={{ margin: '12px 0' }}><CircleHelp/>Red marks come from the built-in English dictionary; poetry, names, and invented words can be added to your personal dictionary. Green marks are suggestions you can ignore.</div>
               {proofOn && <div className="proof-list">
-                {grammars.map((item) => <div className="proof-item grammar" key={item.match}><strong>{item.match}</strong><p>{item.reason}</p><div className="proof-actions">{item.fix && <button className="button small" onClick={() => { const updated = text.replace(item.match, item.fix); if (editorRef.current) editorRef.current.innerText = updated; onEditorInput(); setDismissed((old) => [...old, item.match]); }} data-testid="button-grammar-apply">Apply {item.fix}</button>}<button className="button small" onClick={() => setDismissed((old) => [...old, item.match])} data-testid="button-grammar-ignore">Ignore</button></div></div>)}
+                {grammars.map((item) => <div className="proof-item grammar" key={item.id}>
+                  <button className="proof-target" type="button" onClick={() => focusProofSuggestion(item)} aria-label={`Find “${item.match}” in the poem`} data-testid={`button-proof-target-${item.id}`}>
+                    <strong>{item.match}</strong><span>Find in poem</span>
+                  </button>
+                  <p>{item.reason}</p>
+                  <div className="proof-actions">
+                    {item.fix && <button className="button small" onClick={() => applyProofSuggestion(item)} data-testid="button-grammar-apply">Apply {item.fix}</button>}
+                    <button className="button small" onClick={() => { setIgnoredGrammar((current) => current.includes(item.id) ? current : [...current, item.id]); setFocusedProofRange(null); }} data-testid="button-grammar-ignore">Ignore</button>
+                  </div>
+                </div>)}
                 {!grammars.length && <div className="empty-hint">No local grammar suggestions right now. Keep listening to the line.</div>}
                 <div className="proof-item"><strong>Add a word to your dictionary</strong><p>Selected word: {selection.split(/\s+/).pop() || 'select a word in the poem'}</p><button className="button small" style={{ marginTop: 7 }} disabled={!selection} onClick={() => addToDictionary(selection.split(/\s+/).pop() || '')} data-testid="button-add-word"><Plus/>Add selected word</button></div>
                 {customWords.length > 0 && <div className="proof-item"><strong>Your words · {customWords.length}</strong><p>{customWords.join(' · ')}</p><button className="button small" onClick={() => { setCustomWords([]); setToast('Personal dictionary cleared'); }}>Clear dictionary</button></div>}
