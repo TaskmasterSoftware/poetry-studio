@@ -120,7 +120,11 @@
 .book-spine svg { width: 13px; height: 13px; }
 .book-spine span { font: 7px var(--app-font-mono, monospace); letter-spacing: .04em; }
 .book-heading { flex: 1; min-width: 0; }
-.book-heading h3 { margin: 0; overflow: hidden; color: #edece2; font: 500 13px/1.3 var(--app-font-serif, Georgia, serif); text-overflow: ellipsis; white-space: nowrap; }
+.book-heading h3 { min-width: 0; margin: 0; color: #edece2; font: 500 13px/1.3 var(--app-font-serif, Georgia, serif); }
+.book-toggle { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; }
+.book-toggle-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-chevron { width: 12px; height: 12px; flex: 0 0 12px; color: #9eb2a8; transition: transform .18s ease; }
+.is-collapsed .book-chevron { transform: rotate(-90deg); }
 .book-count { display: block; margin-top: 3px; color: #9eb2a8; font: 9px var(--app-font-mono, monospace); }
 
 .book-tools { display: flex; gap: 1px; flex: 0 0 auto; opacity: .6; }
@@ -152,6 +156,7 @@
 .current-book-label span { width: 5px; height: 5px; border-radius: 50%; background: #d2a093; }
 
 .book-poems { display: grid; gap: 1px; min-width: 0; margin: 7px 0 3px 30px; }
+.book-poems[hidden] { display: none !important; }
 .shelf-poem { display: flex; align-items: center; min-width: 0; border-radius: 4px; }
 .shelf-poem.is-selected { background: #d2a09314; }
 .poem-select {

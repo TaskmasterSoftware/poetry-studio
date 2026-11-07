@@ -1,12 +1,23 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
-  BookMarked, BookOpen, Check, Download, FilePlus2, FolderPlus, Import, MoreHorizontal,
+  BookMarked, BookOpen, Check, ChevronDown, Download, FilePlus2, FolderPlus, Import, MoreHorizontal,
   Pencil, Plus, X,
 } from 'lucide-react';
 import './BookShelf.css';
 
 export type ShelfBook = { id: string; title: string; poemCount: number };
 export type ShelfPoem = { id: string; title: string; bookId: string };
+const collapsedBooksStorageKey = 'poetry-studio-collapsed-books';
+
+function readCollapsedBookIds() {
+  try {
+    const saved = localStorage.getItem(collapsedBooksStorageKey);
+    const parsed: unknown = saved ? JSON.parse(saved) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set<string>();
+  }
+}
 
 export type BookShelfProps = {
   books: ShelfBook[];
@@ -37,6 +48,15 @@ export default function BookShelf({
 }: BookShelfProps) {
   const [renamingBookId, setRenamingBookId] = useState('');
   const [renameValue, setRenameValue] = useState('');
+  const [collapsedBookIds, setCollapsedBookIds] = useState(readCollapsedBookIds);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(collapsedBooksStorageKey, JSON.stringify([...collapsedBookIds]));
+    } catch {
+      // The shelf remains usable when browser storage is unavailable.
+    }
+  }, [collapsedBookIds]);
 
   const beginRename = (book: ShelfBook) => {
     setRenamingBookId(book.id);
@@ -57,6 +77,15 @@ export default function BookShelf({
 
   const handleRenameKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') cancelRename();
+  };
+
+  const toggleBook = (bookId: string) => {
+    setCollapsedBookIds((current) => {
+      const next = new Set(current);
+      if (next.has(bookId)) next.delete(bookId);
+      else next.add(bookId);
+      return next;
+    });
   };
 
   return (
@@ -95,9 +124,10 @@ export default function BookShelf({
             const bookPoems = poems.filter((poem) => poem.bookId === book.id);
             const isActiveBook = book.id === activeBookId;
             const isRenaming = renamingBookId === book.id;
+            const isCollapsed = collapsedBookIds.has(book.id);
             return (
               <section
-                className={`shelf-book${isActiveBook ? ' is-current' : ''}`}
+                className={`shelf-book${isActiveBook ? ' is-current' : ''}${isCollapsed ? ' is-collapsed' : ''}`}
                 key={book.id}
                 aria-labelledby={`shelf-book-title-${book.id}`}
                 data-testid={`shelf-book-${book.id}`}
@@ -129,7 +159,20 @@ export default function BookShelf({
                       </form>
                     ) : (
                       <>
-                        <h3 id={`shelf-book-title-${book.id}`} title={book.title}>{book.title}</h3>
+                        <h3 id={`shelf-book-title-${book.id}`} title={book.title}>
+                          <button
+                            className="book-toggle"
+                            type="button"
+                            onClick={() => toggleBook(book.id)}
+                            aria-expanded={!isCollapsed}
+                            aria-controls={`book-poems-${book.id}`}
+                            aria-label={`${isCollapsed ? 'Open' : 'Close'} ${book.title}`}
+                            data-testid={`button-toggle-book-${book.id}`}
+                          >
+                            <span className="book-toggle-title">{book.title}</span>
+                            <ChevronDown className="book-chevron" aria-hidden="true" />
+                          </button>
+                        </h3>
                         <span className="book-count">{bookPoems.length} {bookPoems.length === 1 ? 'poem' : 'poems'}</span>
                       </>
                     )}
@@ -157,7 +200,7 @@ export default function BookShelf({
                 </div>
 
                 {isActiveBook && <span className="current-book-label"><span />Current book</span>}
-                <div className="book-poems">
+                <div className="book-poems" id={`book-poems-${book.id}`} hidden={isCollapsed}>
                   {bookPoems.length ? bookPoems.map((poem) => {
                     const selected = poem.id === activePoemId;
                     return (
