@@ -157,12 +157,22 @@
 .tool svg { width:15px;height:15px; }
 .select-tool { border:1px solid #dfddd4; background:#f9f7f0; color:#52665e; font-size:10px; height:29px; border-radius:5px; padding:0 7px; }
 .editor-wrap { flex:1; overflow:auto; padding:28px clamp(22px,5vw,72px) 40px; }
-.paper { max-width:760px; min-height:490px; margin:0 auto; padding:31px 36px 55px; background:#fbfaf5; border:1px solid #e8e4d9; box-shadow:0 9px 26px rgba(57,65,55,.035); border-radius:2px; }
+.paper { position:relative; max-width:760px; min-height:490px; margin:0 auto; padding:31px 36px 55px; background:#fbfaf5; border:1px solid #e8e4d9; box-shadow:0 9px 26px rgba(57,65,55,.035); border-radius:2px; }
 .poem-editor { min-height:400px; outline:none; color:#344a44; font: 19px/1.82 var(--app-font-serif); white-space:pre-wrap; overflow-wrap:anywhere; caret-color:#ae7668; }
 .poem-editor p { margin:0 0 .35em; }
+.poem-editor.scansion-on { padding-top:18px; line-height:2.4; }
+.poem-editor.scansion-on p { margin-bottom:.22em; }
 .poem-editor ul,.poem-editor ol { padding-left:1.5em; }
 .poem-editor [data-scansion="unstressed"] { color:#879b91; }
 .poem-editor [data-scansion="stressed"] { color:#b47767; }
+.scansion-overlay { position:absolute; inset:0; z-index:3; pointer-events:none; }
+.scan-syllable,.scan-foot { position:absolute; transform:translateX(-50%); display:grid; place-items:center; min-width:16px; height:18px; padding:0; border:0; background:transparent; font:13px/1 var(--app-font-mono); cursor:pointer; pointer-events:auto; }
+.scan-syllable { color:#78907d; }
+.scan-syllable.scan-stressed { color:#b47767; }
+.scan-syllable.scan-partial { color:#8b789e; }
+.scan-foot { color:#97a39a; opacity:.34; font-size:12px; }
+.scan-foot.active { color:#667d6d; opacity:1; font-weight:700; }
+.scan-syllable:focus-visible,.scan-foot:focus-visible { outline:2px solid #a07669; outline-offset:2px; border-radius:3px; }
 ::highlight(poetry-spelling) { text-decoration: underline wavy #c45d57; text-underline-offset: 3px; }
 ::highlight(poetry-grammar) { text-decoration: underline wavy #719b75; text-underline-offset: 3px; }
 .editor-footer { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:13px clamp(20px,5vw,72px); border-top:1px solid #e2dfd6; background:#f7f5ee; color:#7c8980; font:9px var(--app-font-mono); }
@@ -222,6 +232,10 @@
 .dark .paper,.dark .panel-card,.dark .dialog { background:#253832;border-color:#3b5048; }
 .dark .doc-head { background:#1f302c; }
 .dark .title-input,.dark .poem-editor,.dark .panel-title,.dark .panel-card strong,.dark .rhyme-row,.dark .switch-title { color:#e0e5d9; }
+.dark .scan-syllable { color:#adc4b0; }
+.dark .scan-syllable.scan-stressed { color:#e2a08e; }
+.dark .scan-syllable.scan-partial { color:#c4add8; }
+.dark .scan-foot.active { color:#cad8c9; }
 .dark .button,.dark .text-field,.dark .search-field,.dark .select-tool { background:#2b4039;color:#dce3d8;border-color:#43584e; }
 .dark .button:hover { background:#354b42; }
 .dark .switch-row,.dark .rhyme-row,.dark .form-item { border-color:#394c43; }

@@ -14,6 +14,14 @@ type Pronunciation = {
   stress: string;
 };
 
+export type ScannedWord = {
+  word: string;
+  start: number;
+  end: number;
+  marks: ("u" | "/")[];
+  syllableOffsets: number[];
+};
+
 let dictionaryPromise: Promise<Pronunciation[]> | undefined;
 let lexiconPromise: Promise<Map<string, Pronunciation>> | undefined;
 
@@ -55,7 +63,7 @@ function parseDictionary(text: string): Pronunciation[] {
       onset,
       coda,
       syllables: stresses.length,
-      stress: stresses.map((stress) => (stress === "1" || stress === "2" ? "／" : "×")).join(""),
+      stress: stresses.map((stress) => (stress === "1" || stress === "2" ? "/" : "u")).join(""),
     });
   }
 
@@ -78,7 +86,7 @@ function choosePronunciations(entries: Pronunciation[]): Pronunciation[] {
   const chosen = new Map<string, Pronunciation>();
   for (const entry of entries) {
     const previous = chosen.get(entry.word);
-    if (!previous || entry.stress.includes("／")) chosen.set(entry.word, entry);
+    if (!previous || entry.stress.includes("/")) chosen.set(entry.word, entry);
   }
   return [...chosen.values()];
 }
@@ -132,11 +140,45 @@ export async function findRhymes(
 }
 
 export async function scanLine(line: string): Promise<string> {
+  return (await scanLineWords(line)).map((word) => word.marks.join("")).join(" ");
+}
+
+function estimateSyllableOffsets(word: string, count: number): number[] {
+  const nuclei = [...word.matchAll(/[aeiouy]+/gi)].map((match) =>
+    (match.index ?? 0) + Math.floor(match[0].length / 2),
+  );
+  if (nuclei.length === 0) {
+    return Array.from({ length: count }, (_, index) =>
+      Math.min(word.length - 1, Math.floor(((index + 0.5) * word.length) / count)),
+    );
+  }
+  if (nuclei.length === count) return nuclei;
+  return Array.from({ length: count }, (_, index) => {
+    const nucleusIndex = Math.min(
+      nuclei.length - 1,
+      Math.floor(((index + 0.5) * nuclei.length) / count),
+    );
+    return nuclei[nucleusIndex];
+  });
+}
+
+export async function scanLineWords(line: string): Promise<ScannedWord[]> {
   const byWord = await getLexicon();
-  const words = line.toLowerCase().match(/[a-z']+/g) ?? [];
-  return words
-    .map((word) => byWord.get(word)?.stress ?? (word.match(/[aeiouy]+/g)?.map(() => "×").join("") || "×"))
-    .join(" ");
+  return [...line.matchAll(/[a-z']+/gi)].map((match) => {
+    const word = match[0];
+    const normalized = word.toLowerCase().replace(/’/g, "'");
+    const pronunciation = byWord.get(normalized);
+    const fallbackSyllables = Math.max(1, word.match(/[aeiouy]+/gi)?.length ?? 1);
+    const marks = (pronunciation?.stress.split("") ??
+      Array.from({ length: fallbackSyllables }, () => "u")) as ("u" | "/")[];
+    return {
+      word,
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + word.length,
+      marks,
+      syllableOffsets: estimateSyllableOffsets(word, marks.length),
+    };
+  });
 }
 
 export async function findSpellingErrors(text: string, personalWords: string[]): Promise<string[]> {

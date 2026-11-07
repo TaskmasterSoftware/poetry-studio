@@ -5,7 +5,8 @@ import {
   Minus, Moon, PanelRight, Plus, Redo2, Search,
   Settings2, SpellCheck, Strikethrough, Sun, Type, Underline, Undo2, X,
 } from 'lucide-react';
-import { findRhymes, findSpellingErrors, scanLine, type RhymeMatch } from './lib/phonetics';
+import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
+import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
 type FormEntry = { name: string; structure: string; description: string; example: string };
@@ -82,6 +83,7 @@ function findGrammar(text: string) {
 
 function App() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const paperRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const savedHtml = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
@@ -108,7 +110,9 @@ function App() {
   const [fontSize, setFontSize] = useState(settings.fontSize);
   const [formLabel, setFormLabel] = useState('Free verse');
   const [ignoredGrammar, setIgnoredGrammar] = useState<string[]>([]);
-  const [scansionLines, setScansionLines] = useState<string[]>([]);
+  const [scansionRows, setScansionRows] = useState<ScannedWord[][]>([]);
+  const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
+  const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
   const [spellingErrors, setSpellingErrors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -129,10 +133,11 @@ function App() {
   const wordCount = wordsOf(text).length;
   const lines = text.split(/\n/).filter((line) => line.trim());
   const lineCount = lines.length;
+  const scanTextLines = text.split('\n');
+  const countedLineEntries = scanTextLines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim());
   const query = (rhymeQuery || selection.split(/\s+/).filter(Boolean).pop() || '').replace(/[^\p{L}'-]/gu, '');
   const grammars = useMemo(() => findGrammar(text).filter((item) => !dismissed.includes(item.match) && !ignoredGrammar.includes(item.match)), [text, dismissed, ignoredGrammar]);
   const filteredForms = forms.filter((form) => `${form.name} ${form.structure} ${form.description}`.toLowerCase().includes(formQuery.toLowerCase()));
-  const poemLinesKey = lines.join('\n');
 
   useEffect(() => {
     let current = true;
@@ -163,19 +168,44 @@ function App() {
 
   useEffect(() => {
     let current = true;
-    if (!poemLinesKey) {
-      setScansionLines([]);
+    if (!text) {
+      setScansionRows([]);
       return () => { current = false; };
     }
-    Promise.all(poemLinesKey.split('\n').map((line) => scanLine(line)))
-      .then((scansion) => {
-        if (current) setScansionLines(scansion);
+    Promise.all(text.split('\n').map((line) => scanLineWords(line)))
+      .then((rows) => {
+        if (current) setScansionRows(rows);
       })
       .catch(() => {
-        if (current) setScansionLines([]);
+        if (current) setScansionRows([]);
       });
     return () => { current = false; };
-  }, [poemLinesKey]);
+  }, [text]);
+
+  useEffect(() => {
+    localStorage.setItem('poetry-studio-scansion', JSON.stringify(scanEdits));
+  }, [scanEdits]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const paper = paperRef.current;
+    if (!settings.scansion || !editor || !paper) {
+      setScansionOverlayItems([]);
+      return;
+    }
+
+    const updateOverlay = () => {
+      setScansionOverlayItems(layoutScansionOverlay(editor, paper, scanTextLines, scansionRows, scanEdits));
+    };
+    updateOverlay();
+    const observer = new ResizeObserver(updateOverlay);
+    observer.observe(editor);
+    window.addEventListener('resize', updateOverlay);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateOverlay);
+    };
+  }, [settings.scansion, text, scansionRows, scanEdits, fontSize, tabStops]);
 
   useEffect(() => {
     let current = true;
@@ -295,6 +325,30 @@ function App() {
     const normalized = word.trim().toLowerCase().replace(/[^\p{L}'-]/gu, '');
     if (normalized && !customWords.includes(normalized)) { setCustomWords((old) => [...old, normalized]); setToast(`“${normalized}” added to your dictionary`); }
   };
+  const cycleScansionMark = (item: Extract<ScansionOverlayItem, { kind: 'syllable' }>) => {
+    setScanEdits((previous) => {
+      const current = previous[item.lineKey] ?? { marks: {}, feet: [] };
+      const symbol = current.marks[item.syllableIndex] ?? item.symbol;
+      const symbols: ScanSymbol[] = ['u', '/', '\\'];
+      const next = symbols[(symbols.indexOf(symbol) + 1) % symbols.length];
+      return {
+        ...previous,
+        [item.lineKey]: {
+          ...current,
+          marks: { ...current.marks, [item.syllableIndex]: next },
+        },
+      };
+    });
+  };
+  const toggleFootBoundary = (item: Extract<ScansionOverlayItem, { kind: 'foot' }>) => {
+    setScanEdits((previous) => {
+      const current = previous[item.lineKey] ?? { marks: {}, feet: [] };
+      const feet = current.feet.includes(item.boundaryIndex)
+        ? current.feet.filter((boundary) => boundary !== item.boundaryIndex)
+        : [...current.feet, item.boundaryIndex].sort((a, b) => a - b);
+      return { ...previous, [item.lineKey]: { ...current, feet } };
+    });
+  };
   const exportPoem = (kind: 'txt' | 'html') => {
     const content = kind === 'txt' ? `${title}\n\n${text}` : `<!doctype html><meta charset="utf-8"><title>${title}</title><article><h1>${title}</h1>${html}</article>`;
     const blob = new Blob([content], { type: kind === 'txt' ? 'text/plain' : 'text/html' });
@@ -379,10 +433,15 @@ function App() {
               </div>
             </div>
             <div className="editor-wrap">
-              <div className="paper">
+              <div ref={paperRef} className="paper">
+                {settings.scansion && <div className="scansion-overlay" aria-label="Scansion marks above poem lines">
+                  {scansionOverlayItems.map((item) => item.kind === 'syllable'
+                    ? <button key={item.id} type="button" className={`scan-syllable scan-${item.symbol === '\\' ? 'partial' : item.symbol === '/' ? 'stressed' : 'light'}`} style={{ left: item.left, top: item.top }} title="Click to cycle: u, /, or \\." aria-label={`Syllable ${item.syllableIndex + 1}: ${item.symbol}. Click to change mark.`} onMouseDown={(event) => event.preventDefault()} onClick={() => cycleScansionMark(item)}>{item.symbol}</button>
+                    : <button key={item.id} type="button" className={`scan-foot ${item.active ? 'active' : ''}`} style={{ left: item.left, top: item.top }} title={item.active ? 'Remove foot boundary' : 'Add foot boundary'} aria-label={item.active ? 'Remove foot boundary' : 'Add foot boundary'} onMouseDown={(event) => event.preventDefault()} onClick={() => toggleFootBoundary(item)}>{item.active ? '|' : '·'}</button>)}
+                </div>}
                 <div
                   ref={editorRef}
-                  className="poem-editor"
+                  className={`poem-editor ${settings.scansion ? 'scansion-on' : ''}`}
                   contentEditable
                   suppressContentEditableWarning
                   spellCheck={false}
@@ -400,15 +459,11 @@ function App() {
                   style={{ fontSize, tabSize: tabStops === '2 spaces' ? 2 : tabStops === '8 spaces' ? 8 : 4 }}
                   data-testid="editor-manuscript"
                 />
-                {settings.scansion && <div style={{ borderTop: '1px solid #e9e5dc', marginTop: 26, paddingTop: 14 }}>
-                  <div className="field-label">Loose stress guide · heuristic only</div>
-                  {scansionLines.map((line, index) => <div key={`${line}-${index}`} style={{ color: '#7e9287', font: '11px/2 var(--app-font-mono)', overflowWrap: 'anywhere' }}>{line || '—'}</div>)}
-                </div>}
               </div>
             </div>
             <footer className="editor-footer">
               <div className="count-set"><span><b>{wordCount}</b> words</span><span><b>{lineCount}</b> lines</span></div>
-              <span>{settings.scansion ? 'Stress guide on' : 'Line breaks preserved'} · local draft</span>
+              <span>{settings.scansion ? 'Marks above lines · click to edit' : 'Line breaks preserved'} · local draft</span>
               <button className="button small" onClick={() => persistNow()} data-testid="button-save"><Check/>Save now</button>
             </footer>
           </section>
@@ -447,10 +502,13 @@ function App() {
               {!proofOn && <div className="empty-hint">Proofing is paused. Browser spellcheck is also off for the workspace.</div>}
             </div>}
             {activeTool === 'scansion' && <div className="panel-card">
-              <div className="switch-row"><div><div className="switch-title">Show stress guide</div><div className="switch-desc">Alternating beats, loosely estimated</div></div><button className={`switch ${settings.scansion ? 'on' : ''}`} role="switch" aria-checked={settings.scansion} aria-label="Toggle scansion guide" onClick={() => setSettings((old) => ({ ...old, scansion: !old.scansion }))} data-testid="toggle-scansion"/></div>
-              <div className="notice" style={{ marginTop: 12 }}><Type/>A rough syllable and stress prompt, not a meter scanner. Read aloud and trust the poem's own music.</div>
+              <div className="switch-row"><div><div className="switch-title">Show marks above each line</div><div className="switch-desc">Overlay the stress guide on the poem</div></div><button className={`switch ${settings.scansion ? 'on' : ''}`} role="switch" aria-checked={settings.scansion} aria-label="Toggle scansion guide" onClick={() => setSettings((old) => ({ ...old, scansion: !old.scansion }))} data-testid="toggle-scansion"/></div>
+              <div className="notice" style={{ marginTop: 12 }}><Type/>Click a mark to cycle through u, /, and \\. Click between marks to add or remove a foot boundary. The pronunciation-based marks are a starting point—your ear has the final say.</div>
               <div className="field-label" style={{ marginTop: 16 }}>Line syllable estimates</div>
-              {lines.slice(0, 9).map((line, i) => <div className="rhyme-row" key={i} style={{ alignItems: 'flex-start', gap: 8 }}><span style={{ font: '12px var(--app-font-serif)', flex: 1 }}>{line.slice(0, 34)}{line.length > 34 ? '…' : ''}</span><span className="rhyme-kind">{(scansionLines[i]?.match(/[×／]/g) ?? []).length || lineSyllables(line)} syl.</span></div>)}
+              {countedLineEntries.slice(0, 9).map(({ line, index }) => {
+                const syllableCount = scansionRows[index]?.reduce((total, word) => total + word.marks.length, 0) || lineSyllables(line);
+                return <div className="rhyme-row" key={`${index}-${line}`} style={{ alignItems: 'flex-start', gap: 8 }}><span style={{ font: '12px var(--app-font-serif)', flex: 1 }}>{line.slice(0, 34)}{line.length > 34 ? '…' : ''}</span><span className="rhyme-kind">{syllableCount} syl.</span></div>;
+              })}
             </div>}
             <div className="panel-card">
               <div className="field-label">Studio switches</div>
