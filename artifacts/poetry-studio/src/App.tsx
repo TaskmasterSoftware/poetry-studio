@@ -1,12 +1,16 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignCenter, AlignLeft, AlignRight, BookOpen, Check, CircleHelp,
-  Download, Feather, FileText, Indent, Italic, List, ListOrdered,
+  Download, Feather, FileText, FolderOpen, Indent, Italic, List, ListOrdered,
   Minus, Moon, PanelRight, Plus, Redo2, Search,
-  Settings2, SpellCheck, Strikethrough, Sun, Type, Underline, Undo2, X,
+  Save, Settings2, SpellCheck, Strikethrough, Sun, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
+import {
+  choosePoemFile, downloadPoemFile, poemTextToEditorHtml, readPoemFile,
+  serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileHandle,
+} from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
 type FormEntry = { name: string; structure: string; description: string; example: string };
@@ -85,6 +89,9 @@ function App() {
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileHandleRef = useRef<WritablePoemFileHandle | null>(null);
+  const fileFormatRef = useRef<PoemFileFormat | null>(null);
   const savedHtml = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
@@ -105,6 +112,7 @@ function App() {
   const [toast, setToast] = useState('');
   const [savedAt, setSavedAt] = useState('All changes saved');
   const [dirty, setDirty] = useState(false);
+  const [openedFileName, setOpenedFileName] = useState('');
   const [isDark, setIsDark] = useState(settings.dark);
   const [tabStops, setTabStops] = useState(settings.tab);
   const [fontSize, setFontSize] = useState(settings.fontSize);
@@ -289,6 +297,7 @@ function App() {
 
   const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML || html) => {
     window.clearTimeout(saveTimer.current);
+    window.clearTimeout(titleTimer.current);
     localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
     localStorage.setItem('poetry-studio-title', JSON.stringify(titleRef.current?.value || title));
     savedHtml.current = nextHtml;
@@ -296,6 +305,90 @@ function App() {
     setDirty(false);
     setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
   }, [html, title]);
+
+  const applyOpenedPoem = useCallback((poem: { title: string; text: string; fileName: string; format: PoemFileFormat }, handle: WritablePoemFileHandle | null) => {
+    const nextHtml = poemTextToEditorHtml(poem.text);
+    window.clearTimeout(saveTimer.current);
+    window.clearTimeout(titleTimer.current);
+    fileHandleRef.current = handle;
+    fileFormatRef.current = poem.format;
+    setOpenedFileName(poem.fileName);
+    setTitle(poem.title);
+    setHtml(nextHtml);
+    savedHtml.current = nextHtml;
+    if (editorRef.current) editorRef.current.innerHTML = nextHtml;
+    localStorage.setItem('poetry-studio-title', JSON.stringify(poem.title));
+    localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
+    setDirty(false);
+    setSavedAt('Opened from device');
+    setToast(`Opened ${poem.fileName}`);
+  }, []);
+
+  const openPoem = useCallback(async () => {
+    if (dirty) {
+      persistNow();
+      if (!window.confirm('Open another poem? Your latest changes are saved in this browser, but will replace the editor.')) return;
+    }
+    try {
+      const handle = await choosePoemFile();
+      if (handle) {
+        const poem = await readPoemFile(await handle.getFile());
+        applyOpenedPoem(poem, handle);
+      } else {
+        fileInputRef.current?.click();
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setToast(error instanceof Error ? error.message : 'Could not open that poem file.');
+    }
+  }, [applyOpenedPoem, dirty, persistNow]);
+
+  const onFallbackFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const poem = await readPoemFile(file);
+      applyOpenedPoem(poem, null);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Could not open that poem file.');
+    }
+  }, [applyOpenedPoem]);
+
+  const savePoem = useCallback(async () => {
+    const currentTitle = titleRef.current?.value || title;
+    const currentHtml = editorRef.current?.innerHTML || html;
+    const currentText = cleanText(currentHtml);
+    const handle = fileHandleRef.current;
+    const format = fileFormatRef.current;
+    if (handle && format) {
+      try {
+        await writePoemFile(handle, serializePoem(currentTitle, currentText, format));
+        const editorUnchanged = editorRef.current?.innerHTML === currentHtml;
+        const titleUnchanged = titleRef.current?.value === currentTitle;
+        if (editorUnchanged && titleUnchanged) {
+          persistNow(currentHtml);
+          setToast(`Saved to ${handle.name}`);
+          setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+        } else {
+          setToast(`Saved to ${handle.name}; newer edits remain in the browser draft`);
+          setSavedAt('Newer edits need saving');
+        }
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : 'Could not save to this file.');
+      }
+      return;
+    }
+    if (openedFileName && format) {
+      const content = serializePoem(currentTitle, currentText, format);
+      downloadPoemFile(openedFileName, content, format);
+      persistNow(currentHtml);
+      setToast('Updated copy downloaded; browser draft also saved');
+      return;
+    }
+    persistNow(currentHtml);
+    setToast('Draft saved in this browser');
+  }, [html, openedFileName, persistNow, title]);
 
   const onEditorInput = useCallback(() => {
     const next = editorRef.current?.innerHTML || '';
@@ -389,6 +482,8 @@ function App() {
           <div className="crumb"><span>Manuscripts</span><span>/</span><strong>{title || 'Untitled poem'}</strong></div>
           <div className="top-actions">
             <div className="save-state" data-testid="status-save"><span className="save-dot" style={{ background: dirty ? '#c49b64' : undefined }}/>{savedAt}</div>
+            <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html" hidden onChange={onFallbackFileChange} data-testid="input-open-poem"/>
+            <button className="button" onClick={openPoem} title={openedFileName ? `Currently open: ${openedFileName}` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
             <button className="button ghost" aria-label="Toggle theme" title="Toggle theme" onClick={() => setIsDark((old) => !old)} data-testid="toggle-theme">{isDark ? <Sun/> : <Moon/>}</button>
             <button className="button" onClick={() => setModal('settings')} data-testid="button-settings"><Settings2/><span>Settings</span></button>
             <button className="button primary" onClick={() => setModal('export')} data-testid="button-export"><Download/><span>Export</span></button>
@@ -464,7 +559,7 @@ function App() {
             <footer className="editor-footer">
               <div className="count-set"><span><b>{wordCount}</b> words</span><span><b>{lineCount}</b> lines</span></div>
               <span>{settings.scansion ? 'Marks above lines · click to edit' : 'Line breaks preserved'} · local draft</span>
-              <button className="button small" onClick={() => persistNow()} data-testid="button-save"><Check/>Save now</button>
+              <button className="button small" onClick={() => void savePoem()} data-testid="button-save"><Save/>{openedFileName && !fileHandleRef.current ? 'Download updated copy' : 'Save now'}</button>
             </footer>
           </section>
           <aside className="right-panel">
