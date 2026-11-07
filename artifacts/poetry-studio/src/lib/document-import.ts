@@ -57,9 +57,12 @@ type ExportParagraph = {
   left?: string;
   right?: string;
   firstLine?: string;
+  listType?: "ordered" | "unordered";
+  listLevel?: number;
+  listId?: number;
 };
 
-const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "P", "PRE"]);
+const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "OL", "P", "PRE", "UL"]);
 const editorInlineTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "DEL", "SUP", "SUB"]);
 
 function mergeExportStyles(...styles: ExportInlineStyle[]): ExportInlineStyle {
@@ -131,7 +134,7 @@ function editorParagraphStyle(element: Element): Pick<ExportParagraph, "align" |
   };
 }
 
-function editorParagraphRuns(nodes: Node[], inherited: ExportInlineStyle = {}): ExportRun[] {
+function editorParagraphRuns(nodes: Node[], inherited: ExportInlineStyle = {}, includeBlocks = false): ExportRun[] {
   const runs: ExportRun[] = [];
   const append = (text: string, style: ExportInlineStyle) => {
     if (!text) return;
@@ -153,7 +156,9 @@ function editorParagraphRuns(nodes: Node[], inherited: ExportInlineStyle = {}): 
     } else if (tagName === "WBR") {
       return;
     } else if (editorBlockTags.has(tagName)) {
-      return;
+      if (includeBlocks && tagName !== "OL" && tagName !== "UL") {
+        Array.from(element.childNodes).forEach((child) => visit(child, nextStyle));
+      }
     } else if (editorInlineTags.has(tagName) || element.hasAttribute("style")) {
       Array.from(element.childNodes).forEach((child) => visit(child, nextStyle));
     } else {
@@ -172,6 +177,36 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
       runs: line ? [{ text: line, style: {} }] : [],
     }));
     const paragraphs: ExportParagraph[] = [];
+    let nextListId = 1;
+    const visitList = (list: Element, level: number) => {
+      const listId = nextListId++;
+      const listType = list.tagName.toUpperCase() === "OL" ? "ordered" : "unordered";
+      for (const child of Array.from(list.childNodes)) {
+        if (child.nodeType !== Node.ELEMENT_NODE || (child as Element).tagName.toUpperCase() !== "LI") continue;
+        const item = child as Element;
+        const contentNodes = Array.from(item.childNodes).filter((node) =>
+          node.nodeType !== Node.ELEMENT_NODE
+          || !["OL", "UL"].includes((node as Element).tagName.toUpperCase()),
+        );
+        paragraphs.push({
+          runs: editorParagraphRuns(contentNodes, {}, true),
+          ...editorParagraphStyle(item),
+          listType,
+          listLevel: level,
+          listId,
+        });
+        const visitNestedLists = (container: ParentNode) => {
+          for (const node of Array.from(container.childNodes)) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            const element = node as Element;
+            const tagName = element.tagName.toUpperCase();
+            if (tagName === "OL" || tagName === "UL") visitList(element, level + 1);
+            else visitNestedLists(element);
+          }
+        };
+        visitNestedLists(item);
+      }
+    };
     const visitContainer = (container: ParentNode) => {
       let inlineNodes: Node[] = [];
       const flushInline = () => {
@@ -180,7 +215,10 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
         inlineNodes = [];
       };
       for (const node of Array.from(container.childNodes)) {
-        if (node.nodeType === Node.ELEMENT_NODE && editorBlockTags.has((node as Element).tagName.toUpperCase())) {
+        if (node.nodeType === Node.ELEMENT_NODE && ["OL", "UL"].includes((node as Element).tagName.toUpperCase())) {
+          flushInline();
+          visitList(node as Element, 0);
+        } else if (node.nodeType === Node.ELEMENT_NODE && editorBlockTags.has((node as Element).tagName.toUpperCase())) {
           const block = node as Element;
           const nestedBlocks = Array.from(block.childNodes).some((child) =>
             child.nodeType === Node.ELEMENT_NODE
@@ -241,12 +279,15 @@ function docxRun(run: ExportRun) {
   return `<w:r>${properties ? `<w:rPr>${properties}</w:rPr>` : ""}${content}</w:r>`;
 }
 
-function docxParagraph(paragraph: ExportParagraph, isTitle = false) {
+function docxParagraph(paragraph: ExportParagraph, isTitle = false, numIds?: Map<number, number>) {
   const line = runsPlainText(paragraph.runs);
-  if (!line && !isTitle) return "<w:p/>";
+  if (!line && !isTitle && paragraph.listId === undefined) return "<w:p/>";
   const properties = isTitle
     ? '<w:pStyle w:val="Title"/>'
     : [
+      paragraph.listId !== undefined && paragraph.listLevel !== undefined
+        ? `<w:numPr><w:ilvl w:val="${paragraph.listLevel}"/><w:numId w:val="${numIds?.get(paragraph.listId) || paragraph.listId}"/></w:numPr>`
+        : "",
       paragraph.align ? `<w:jc w:val="${paragraph.align}"/>` : "",
       (() => {
         const left = cssMeasureToTwips(paragraph.left || "");
@@ -259,6 +300,26 @@ function docxParagraph(paragraph: ExportParagraph, isTitle = false) {
     ].filter(Boolean).join("");
   const runs = paragraph.runs.map(docxRun).join("");
   return `<w:p>${properties ? `<w:pPr>${properties}</w:pPr>` : ""}${runs || "<w:r><w:t></w:t></w:r>"}</w:p>`;
+}
+
+function docxNumbering(paragraphs: ExportParagraph[]) {
+  const listIds = Array.from(new Set(paragraphs.filter((paragraph) => paragraph.listId !== undefined)
+    .map((paragraph) => paragraph.listId!)));
+  const numIds = new Map(listIds.map((listId, index) => [listId, index + 1]));
+  const abstractNums = listIds.map((listId, index) => {
+    const group = paragraphs.filter((paragraph) => paragraph.listId === listId);
+    const listType = group[0]?.listType || "unordered";
+    const maxLevel = Math.max(0, ...group.map((paragraph) => paragraph.listLevel || 0));
+    const levels = Array.from({ length: maxLevel + 1 }, (_, level) => {
+      const indent = 720 * (level + 1);
+      const numberFormat = listType === "ordered" ? "decimal" : "bullet";
+      const marker = listType === "ordered" ? `%${level + 1}.` : "•";
+      const font = listType === "ordered" ? "" : '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr>';
+      return `<w:lvl w:ilvl="${level}"><w:start w:val="1"/><w:numFmt w:val="${numberFormat}"/><w:lvlText w:val="${marker}"/><w:lvlJc w:val="left"/>${font}<w:pPr><w:tabs><w:tab w:val="num" w:pos="${indent}"/></w:tabs><w:ind w:left="${indent}" w:hanging="360"/></w:pPr></w:lvl>`;
+    }).join("");
+    return `<w:abstractNum w:abstractNumId="${index + 1}"><w:multiLevelType w:val="multilevel"/>${levels}</w:abstractNum><w:num w:numId="${index + 1}"><w:abstractNumId w:val="${index + 1}"/></w:num>`;
+  }).join("");
+  return { numIds, xml: `<w:numbering xmlns:w="${wordNamespace}">${abstractNums}</w:numbering>` };
 }
 
 function odtInlineStyles(paragraphs: ExportParagraph[]) {
@@ -294,7 +355,7 @@ function odtRun(run: ExportRun, names: Map<string, string>) {
 
 function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>) {
   const paragraphStyles: string[] = [];
-  const body = paragraphs.map((paragraph) => {
+  const paragraphXml = (paragraph: ExportParagraph) => {
     const content = paragraph.runs.map((run) => odtRun(run, names)).join("");
     const styleAttributes = [
       paragraph.align ? `fo:text-align="${paragraph.align}"` : "",
@@ -309,8 +370,83 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
     return !runsPlainText(paragraph.runs)
       ? "<text:p/>"
       : `<text:p${styleName ? ` text:style-name="${styleName}"` : ""}>${content}</text:p>`;
-  }).join("");
-  return { body, paragraphStyles: paragraphStyles.join("") };
+  };
+
+  type OdtListItem = {
+    paragraph: ExportParagraph;
+    listId: number;
+    listType: "ordered" | "unordered";
+    children: OdtListItem[];
+  };
+  const root: Array<ExportParagraph | OdtListItem> = [];
+  const stack: OdtListItem[] = [];
+  for (const paragraph of paragraphs) {
+    if (paragraph.listId === undefined || paragraph.listType === undefined) {
+      root.push(paragraph);
+      stack.length = 0;
+      continue;
+    }
+    const level = Math.max(0, paragraph.listLevel || 0);
+    while (stack.length > level) stack.pop();
+    const item: OdtListItem = {
+      paragraph,
+      listId: paragraph.listId,
+      listType: paragraph.listType,
+      children: [],
+    };
+    const parent = level > 0 ? stack[level - 1] : undefined;
+    if (parent) parent.children.push(item);
+    else root.push(item);
+    stack[level] = item;
+  }
+
+  const renderItems = (items: OdtListItem[]) => {
+    let output = "";
+    for (let index = 0; index < items.length;) {
+      const first = items[index];
+      let end = index + 1;
+      while (end < items.length && items[end].listId === first.listId && items[end].listType === first.listType) end += 1;
+      const listStyle = first.listType === "ordered" ? "PoemNumberedList" : "PoemBulletedList";
+      const listItems = items.slice(index, end).map((item) =>
+        `<text:list-item>${paragraphXml(item.paragraph)}${renderItems(item.children)}</text:list-item>`,
+      ).join("");
+      output += `<text:list text:style-name="${listStyle}">${listItems}</text:list>`;
+      index = end;
+    }
+    return output;
+  };
+  const renderRoot = (nodes: Array<ExportParagraph | OdtListItem>) => {
+    let output = "";
+    for (let index = 0; index < nodes.length;) {
+      const node = nodes[index];
+      if (!("paragraph" in node)) {
+        output += paragraphXml(node);
+        index += 1;
+        continue;
+      }
+      let end = index + 1;
+      while (end < nodes.length && "paragraph" in nodes[end]
+        && nodes[end].listId === node.listId && nodes[end].listType === node.listType) end += 1;
+      output += renderItems(nodes.slice(index, end) as OdtListItem[]);
+      index = end;
+    }
+    return output;
+  };
+  const hasOrdered = paragraphs.some((paragraph) => paragraph.listType === "ordered");
+  const hasUnordered = paragraphs.some((paragraph) => paragraph.listType === "unordered");
+  const listStyles = [
+    hasOrdered ? `<text:list-style style:name="PoemNumberedList">${Array.from({ length: 10 }, (_, level) =>
+      `<text:list-level-style-number text:level="${level + 1}" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="${0.25 * (level + 1)}in" text:min-label-width="0.25in"/></text:list-level-style-number>`,
+    ).join("")}</text:list-style>` : "",
+    hasUnordered ? `<text:list-style style:name="PoemBulletedList">${Array.from({ length: 10 }, (_, level) =>
+      `<text:list-level-style-bullet text:level="${level + 1}" text:bullet-char="•"><style:list-level-properties text:space-before="${0.25 * (level + 1)}in" text:min-label-width="0.25in"/></text:list-level-properties></text:list-level-style-bullet>`,
+    ).join("")}</text:list-style>` : "",
+  ].join("");
+  return {
+    body: renderRoot(root),
+    paragraphStyles: `${paragraphStyles.join("")}${listStyles.replace("</style:list-level-properties>", "")}`,
+    listStyles: "",
+  };
 }
 
 function asBlob(bytes: Uint8Array, type: string) {
@@ -333,8 +469,11 @@ function rtfRun(run: ExportRun) {
   return controls ? `{${controls} ${content}}` : content;
 }
 
-function rtfParagraph(paragraph: ExportParagraph) {
+function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, number>) {
   const controls = [
+    paragraph.listId !== undefined && paragraph.listLevel !== undefined
+      ? `\\ls${listNumbers.get(paragraph.listId) || 1}\\ilvl${paragraph.listLevel}`
+      : "",
     paragraph.align === "center" ? "\\qc" : "",
     paragraph.align === "right" ? "\\qr" : "",
     paragraph.align === "justify" ? "\\qj" : "",
@@ -352,31 +491,61 @@ function rtfParagraph(paragraph: ExportParagraph) {
       return value === undefined ? "" : `\\fi${value}`;
     })() : "",
   ].filter(Boolean).join("");
-  return `${controls ? `{${controls} ` : ""}${paragraph.runs.map(rtfRun).join("")}${controls ? "}" : ""}\\par\n`;
+  const content = `${controls ? `{${controls} ` : ""}${paragraph.runs.map(rtfRun).join("")}`;
+  return `${content}${controls ? "\\par}" : "\\par"}\n`;
+}
+
+function rtfListTables(paragraphs: ExportParagraph[]) {
+  const listIds = Array.from(new Set(paragraphs.filter((paragraph) => paragraph.listId !== undefined)
+    .map((paragraph) => paragraph.listId!)));
+  const listNumbers = new Map(listIds.map((listId, index) => [listId, index + 1]));
+  const listDefinitions = listIds.map((listId, index) => {
+    const group = paragraphs.filter((paragraph) => paragraph.listId === listId);
+    const listType = group[0]?.listType || "unordered";
+    const maxLevel = Math.max(0, ...group.map((paragraph) => paragraph.listLevel || 0));
+    const levels = Array.from({ length: maxLevel + 1 }, (_, level) => {
+      const indent = 720 * (level + 1);
+      const levelText = listType === "ordered"
+        ? `\\leveltext\\'02\\'${level.toString(16).padStart(2, "0")}.;}{\\levelnumbers\\'01;`
+        : "\\leveltext\\'01\\'B7;}{\\levelnumbers;";
+      const format = listType === "ordered" ? 0 : 23;
+      return `{\\listlevel\\levelnfc${format}\\leveljc0\\levelfollow0\\levelstartat1\\levelspace0\\levelindent${indent}{${levelText}}\\fi-360\\li${indent}}`;
+    }).join("");
+    const id = 1000 + index;
+    return `{\\list\\listtemplateid${id}${levels}{\\listname ;}\\listid${id}}`;
+  }).join("");
+  const overrides = listIds.map((listId, index) =>
+    `{\\listoverride\\listid${1000 + index}\\listoverridecount0\\ls${index + 1}}`,
+  ).join("");
+  return { listNumbers, tables: listDefinitions ? `{\\*\\listtable${listDefinitions}}{\\*\\listoverridetable${overrides}}` : "" };
 }
 
 export function serializeRtf(title: string, text: string, editorHtml?: string) {
   const titleInfo = title.trim() ? `{\\info{\\title ${rtfText(title)}}}` : "";
   const visibleTitle = title.trim() ? `{\\b ${rtfText(title)}}\\par\n` : "";
   const paragraphs = editorParagraphs(editorHtml, text);
+  const lists = rtfListTables(paragraphs);
   return new Blob(
-    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${titleInfo}\n${visibleTitle}${paragraphs.map(rtfParagraph).join("")}}`],
+    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${titleInfo}${lists.tables}\n${visibleTitle}${paragraphs.map((paragraph) => rtfParagraph(paragraph, lists.listNumbers)).join("")}}`],
     { type: "application/rtf" },
   );
 }
 
 export function serializeDocx(title: string, text: string, editorHtml?: string) {
   const paragraphs = editorParagraphs(editorHtml, text);
+  const numbering = docxNumbering(paragraphs);
   const titleParagraph = title.trim()
     ? `<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>${docxRun({ text: title, style: {} })}</w:p>`
     : "";
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${titleParagraph}${paragraphs.map((paragraph) => docxParagraph(paragraph)).join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+ <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${titleParagraph}${paragraphs.map((paragraph) => docxParagraph(paragraph, false, numbering.numIds)).join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${escapeXml(validXmlText(title))}</dc:title></cp:coreProperties>`;
   const archive = zipSync({
-    "[Content_Types].xml": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>'),
+    "[Content_Types].xml": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>'),
     "_rels/.rels": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>'),
+    "word/_rels/document.xml.rels": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>'),
     "word/document.xml": strToU8(documentXml),
+    "word/numbering.xml": strToU8(numbering.xml),
     "word/styles.xml": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style></w:styles>'),
     "docProps/core.xml": strToU8(coreXml),
   });
@@ -390,7 +559,7 @@ export function serializeOdt(title: string, text: string, editorHtml?: string) {
   const titleContent = title.trim()
     ? `<text:h text:outline-level="1">${escapeXml(validXmlText(title))}</text:h>`
     : "";
-  const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2"><office:automatic-styles>${inlineStyles}${styledParagraphs.paragraphStyles}</office:automatic-styles><office:body><office:text>${titleContent}${styledParagraphs.body}</office:text></office:body></office:document-content>`;
+  const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2"><office:automatic-styles>${inlineStyles}${styledParagraphs.paragraphStyles}</office:automatic-styles><office:body><office:text>${titleContent}${styledParagraphs.listStyles}${styledParagraphs.body}</office:text></office:body></office:document-content>`;
   const archive = zipSync({
     mimetype: strToU8("application/vnd.oasis.opendocument.text"),
     "content.xml": strToU8(contentXml),

@@ -372,3 +372,47 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   assert.match(importedOdt.editorHtml || "", /text-align:center/);
   assert.match(importedOdt.editorHtml || "", /<strong>First<\/strong>/);
 });
+
+test("exports editable numbered and bulleted lists with nesting to office formats", async () => {
+  enableXmlDom();
+  const title = "List poem";
+  const editorHtml = '<p>Opening</p><ol><li>First numbered line<ul><li>Nested bullet line</li></ul></li><li>Second numbered line</li></ol><ul><li>Final bullet line</li></ul><p>Closing</p>';
+  const text = "Opening\nFirst numbered line\nNested bullet line\nSecond numbered line\nFinal bullet line\nClosing";
+
+  const docx = serializePoem(title, text, "docx", editorHtml) as Blob;
+  const docxArchive = unzipSync(new Uint8Array(await docx.arrayBuffer()));
+  const documentXml = strFromU8(docxArchive["word/document.xml"]);
+  const numberingXml = strFromU8(docxArchive["word/numbering.xml"]);
+  const contentTypesXml = strFromU8(docxArchive["[Content_Types].xml"]);
+  assert.match(documentXml, /<w:numPr><w:ilvl w:val="0"\/><w:numId w:val="1"\/><\/w:numPr>/);
+  assert.match(documentXml, /<w:numPr><w:ilvl w:val="1"\/><w:numId w:val="2"\/><\/w:numPr>/);
+  assert.match(numberingXml, /<w:numFmt w:val="decimal"\/>/);
+  assert.match(numberingXml, /<w:numFmt w:val="bullet"\/>/);
+  assert.match(numberingXml, /<w:lvlText w:val="•"\/>/);
+  assert.match(contentTypesXml, /word\/numbering\.xml/);
+  const importedDocx = await readPoemFile(new File([docx], "list-poem.docx"));
+  assert.equal(importedDocx.title, title);
+  assert.equal(importedDocx.text, text);
+
+  const rtf = serializePoem(title, text, "rtf", editorHtml) as Blob;
+  const rtfText = await rtf.text();
+  assert.match(rtfText, /\\levelnfc0/);
+  assert.match(rtfText, /\\levelnfc23/);
+  assert.match(rtfText, /\\ls1\\ilvl0/);
+  assert.match(rtfText, /\\ls2\\ilvl1/);
+  assert.match(rtfText, /\\'B7/);
+  const importedRtf = readRtf(rtfText);
+  assert.equal(importedRtf.title, title);
+  assert.equal(importedRtf.text, text);
+
+  const odt = serializePoem(title, text, "odt", editorHtml) as Blob;
+  const odtArchive = unzipSync(new Uint8Array(await odt.arrayBuffer()));
+  const odtXml = strFromU8(odtArchive["content.xml"]);
+  assert.match(odtXml, /<text:list-style style:name="PoemNumberedList">/);
+  assert.match(odtXml, /<text:list-style style:name="PoemBulletedList">/);
+  assert.match(odtXml, /<text:list-item><text:p>First numbered line<\/text:p><text:list/);
+  assert.match(odtXml, /text:bullet-char="•"/);
+  const importedOdt = await readPoemFile(new File([odt], "list-poem.odt"));
+  assert.equal(importedOdt.title, title);
+  assert.equal(importedOdt.text, text);
+});
