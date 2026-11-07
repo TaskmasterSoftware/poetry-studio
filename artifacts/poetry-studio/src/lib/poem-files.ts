@@ -373,6 +373,25 @@ export const defaultPdfExportOptions: PdfExportOptions = {
   orientation: 'portrait',
 };
 
+export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaultPdfExportOptions };
+  }
+
+  const saved = value as Record<string, unknown>;
+  return {
+    pageSize: saved.pageSize === 'letter' || saved.pageSize === 'a4' || saved.pageSize === 'a5'
+      ? saved.pageSize
+      : defaultPdfExportOptions.pageSize,
+    margins: saved.margins === 'narrow' || saved.margins === 'standard' || saved.margins === 'wide'
+      ? saved.margins
+      : defaultPdfExportOptions.margins,
+    orientation: saved.orientation === 'portrait' || saved.orientation === 'landscape'
+      ? saved.orientation
+      : defaultPdfExportOptions.orientation,
+  };
+}
+
 const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> = {
   letter: { width: 612, height: 792 },
   a4: { width: 595.28, height: 841.89 },

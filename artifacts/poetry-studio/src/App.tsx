@@ -15,7 +15,7 @@ import {
 } from './lib/book-library';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializeBookPdf, serializePoemPdf,
-  appendBrowserPoemRevision, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
+  appendBrowserPoemRevision, defaultPdfExportOptions, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, normalizePdfExportOptions, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
   type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
@@ -88,6 +88,7 @@ function readSavedPoemSource() {
 const draftsStorageKey = 'poetry-studio-drafts';
 const booksStorageKey = 'poetry-studio-books';
 const activeDraftStorageKey = 'poetry-studio-active-draft';
+const pdfExportOptionsStorageKey = 'poetry-studio-pdf-export-options';
 const revisionStorageKey = (draftId: string) => `poetry-studio-revisions-${draftId}`;
 const maxPoemRevisions = 20;
 function createDraftId() {
@@ -255,11 +256,9 @@ function App() {
   const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
   const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
   const [spellingErrors, setSpellingErrors] = useState<string[]>([]);
-  const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>({
-    pageSize: 'letter',
-    margins: 'standard',
-    orientation: 'portrait',
-  });
+  const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>(() =>
+    normalizePdfExportOptions(readStorage<unknown>(pdfExportOptionsStorageKey, null)),
+  );
 
   useEffect(() => {
     if (editorRef.current) { editorRef.current.innerHTML = html; savedHtml.current = html; }
@@ -280,6 +279,13 @@ function App() {
     booksRef.current = books;
   }, [books]);
   useEffect(() => { localStorage.setItem(activeDraftStorageKey, JSON.stringify(activeDraftId)); }, [activeDraftId]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(pdfExportOptionsStorageKey, JSON.stringify(pdfExportOptions));
+    } catch {
+      // Storage may be unavailable or full; keep the current choices for this session.
+    }
+  }, [pdfExportOptions]);
   useEffect(() => {
     if (toast) { const timeout = window.setTimeout(() => setToast(''), 2600); return () => window.clearTimeout(timeout); }
     return undefined;

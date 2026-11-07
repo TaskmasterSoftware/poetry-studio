@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  appendBrowserPoemRevision, choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, readPoemFile, removeBrowserPoemDraft,
+  appendBrowserPoemRevision, choosePoemFile, defaultPdfExportOptions, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, normalizePdfExportOptions, readPoemFile, removeBrowserPoemDraft,
   restoreBrowserPoemDraft, serializeBookPdf, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
@@ -51,6 +51,19 @@ test("validates saved filename and format metadata before restoring it", () => {
   assert.equal(isSavedPoemSource({ fileName: "   ", format: "docx" }), false);
   assert.equal(isSavedPoemSource({ fileName: "night-poem.docx", format: "exe" }), false);
   assert.equal(isSavedPoemSource(null), false);
+});
+
+test("restores only valid saved PDF print choices and defaults missing or invalid values", () => {
+  assert.deepEqual(
+    normalizePdfExportOptions({ pageSize: 'a4', margins: 'narrow', orientation: 'landscape' }),
+    { pageSize: 'a4', margins: 'narrow', orientation: 'landscape' },
+  );
+  assert.deepEqual(
+    normalizePdfExportOptions({ pageSize: 'invalid', margins: 'wide', orientation: 'sideways' }),
+    { ...defaultPdfExportOptions, margins: 'wide' },
+  );
+  assert.deepEqual(normalizePdfExportOptions(null), defaultPdfExportOptions);
+  assert.deepEqual(normalizePdfExportOptions({}), defaultPdfExportOptions);
 });
 
 test("validates browser drafts and keeps imported source metadata attached", () => {
