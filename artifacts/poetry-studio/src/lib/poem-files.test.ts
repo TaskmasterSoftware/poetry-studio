@@ -403,6 +403,49 @@ test("applies selected PDF page size and margins to every poem and book page", a
   }
 });
 
+test("exports landscape poem and book PDFs with landscape wrapping and every page oriented consistently", async () => {
+  const wideLine = "Wide lines have more room on landscape pages, so this whole line stays together.";
+  const poemPdf = await serializePoemPdf(
+    "Wide poem",
+    `${wideLine}\n${Array.from({ length: 70 }, (_, index) => `Continuation ${index + 1}`).join("\n")}`,
+    undefined,
+    { pageSize: "a5", margins: "narrow", orientation: "landscape" },
+  ).text();
+  const a5LandscapePageCount = poemPdf.match(/\/MediaBox \[0 0 595\.28 419\.53\]/g)?.length || 0;
+  assert.ok(a5LandscapePageCount > 1, "the long poem should continue across landscape pages");
+  assert.equal(Number(poemPdf.match(/\/Count (\d+)/)?.[1]), a5LandscapePageCount);
+  const wideLineHex = Buffer.from(wideLine, "ascii").toString("hex").toUpperCase();
+  assert.match(poemPdf, new RegExp(`<${wideLineHex}>`), "the whole wide line should fit on one landscape line");
+  assert.doesNotMatch(poemPdf, /\/MediaBox \[0 0 419\.53 595\.28\]/);
+  const portraitPoemPdf = await serializePoemPdf(
+    "Wide poem",
+    wideLine,
+    undefined,
+    { pageSize: "a5", margins: "narrow", orientation: "portrait" },
+  ).text();
+  assert.doesNotMatch(portraitPoemPdf, new RegExp(`<${wideLineHex}>`), "the same line should wrap on portrait pages");
+  const alignedLandscapePdf = await serializePoemPdf(
+    "Aligned",
+    "Right",
+    '<p style="text-align:right">Right</p>',
+    { pageSize: "a5", margins: "narrow", orientation: "landscape" },
+  ).text();
+  assert.match(alignedLandscapePdf, /BT \/F1 11 Tf 0 Tw 531\.78 346\.53 Td <5269676874>/);
+
+  const bookPdf = await serializeBookPdf("Collected poems", [
+    { title: "First", text: Array.from({ length: 60 }, (_, index) => `First poem line ${index + 1}`).join("\n") },
+    { title: "Second", text: "A short second poem" },
+  ], { pageSize: "a4", margins: "standard", orientation: "landscape" }).text();
+  const a4LandscapePageCount = bookPdf.match(/\/MediaBox \[0 0 841\.89 595\.28\]/g)?.length || 0;
+  assert.ok(a4LandscapePageCount > 1);
+  assert.equal(Number(bookPdf.match(/\/Count (\d+)/)?.[1]), a4LandscapePageCount);
+  assert.doesNotMatch(bookPdf, /\/MediaBox \[0 0 595\.28 841\.89\]/);
+  for (const [, x, y] of bookPdf.matchAll(/BT \/F[12] \d+ Tf ([\d.]+) ([\d.]+) Td/g)) {
+    assert.ok(Number(x) >= 72, "book text should respect the left margin in landscape");
+    assert.ok(Number(y) <= 595.28 - 72, "book text should fit within the landscape page height");
+  }
+});
+
 test("exports PDF emphasis and paragraph alignment while keeping plain text styling unchanged", async () => {
   enableXmlDom();
   const editorHtml = '<p style="text-align:center"><strong>Bold</strong> <em>Italic</em> <u>Under</u></p><p style="text-align:right">Right</p>';

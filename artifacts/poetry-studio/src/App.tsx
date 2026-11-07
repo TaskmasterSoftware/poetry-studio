@@ -255,7 +255,11 @@ function App() {
   const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
   const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
   const [spellingErrors, setSpellingErrors] = useState<string[]>([]);
-  const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>({ pageSize: 'letter', margins: 'standard' });
+  const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>({
+    pageSize: 'letter',
+    margins: 'standard',
+    orientation: 'portrait',
+  });
 
   useEffect(() => {
     if (editorRef.current) { editorRef.current.innerHTML = html; savedHtml.current = html; }
@@ -1078,6 +1082,18 @@ function App() {
         <option value="letter">Letter · 8.5 × 11 in</option>
         <option value="a4">A4 · 210 × 297 mm</option>
         <option value="a5">A5 · 148 × 210 mm</option>
+      </select>
+    </label>
+    <label>
+      <span className="field-label">Orientation</span>
+      <select
+        className="text-field"
+        value={pdfExportOptions.orientation ?? 'portrait'}
+        onChange={(event) => setPdfExportOptions((previous) => ({ ...previous, orientation: event.target.value as NonNullable<PdfExportOptions['orientation']> }))}
+        data-testid="select-pdf-orientation"
+      >
+        <option value="portrait">Portrait</option>
+        <option value="landscape">Landscape</option>
       </select>
     </label>
     <label>

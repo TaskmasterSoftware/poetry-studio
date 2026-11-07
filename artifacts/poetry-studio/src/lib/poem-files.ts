@@ -324,7 +324,7 @@ function wrapPdfLine(value: string, maxCharacters: number) {
 }
 
 function assemblePdf(title: string, pages: string[][], options: PdfExportOptions) {
-  const { width, height } = pdfPageDimensions[options.pageSize];
+  const { width, height } = pdfDimensions(options);
   const objects: string[] = [];
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${7 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
@@ -360,12 +360,18 @@ function assemblePdf(title: string, pages: string[][], options: PdfExportOptions
 
 export type PdfPageSize = 'letter' | 'a4' | 'a5';
 export type PdfMarginPreset = 'narrow' | 'standard' | 'wide';
+export type PdfOrientation = 'portrait' | 'landscape';
 export interface PdfExportOptions {
   pageSize: PdfPageSize;
   margins: PdfMarginPreset;
+  orientation?: PdfOrientation;
 }
 
-export const defaultPdfExportOptions: PdfExportOptions = { pageSize: 'letter', margins: 'standard' };
+export const defaultPdfExportOptions: PdfExportOptions = {
+  pageSize: 'letter',
+  margins: 'standard',
+  orientation: 'portrait',
+};
 
 const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> = {
   letter: { width: 612, height: 792 },
@@ -373,6 +379,13 @@ const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> 
   a5: { width: 419.53, height: 595.28 },
 };
 const pdfMarginPoints: Record<PdfMarginPreset, number> = { narrow: 36, standard: 72, wide: 90 };
+
+function pdfDimensions(options: PdfExportOptions) {
+  const dimensions = pdfPageDimensions[options.pageSize];
+  return options.orientation === 'landscape'
+    ? { width: dimensions.height, height: dimensions.width }
+    : dimensions;
+}
 
 function cssMeasureToPdfPoints(value: string | undefined) {
   const match = value?.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))(pt|in|cm|mm|px|pc)$/i);
@@ -385,7 +398,7 @@ function cssMeasureToPdfPoints(value: string | undefined) {
 }
 
 function pdfLayout(options: PdfExportOptions) {
-  const { width, height } = pdfPageDimensions[options.pageSize];
+  const { width, height } = pdfDimensions(options);
   const margin = pdfMarginPoints[options.margins];
   const contentWidth = width - margin * 2;
   return {
