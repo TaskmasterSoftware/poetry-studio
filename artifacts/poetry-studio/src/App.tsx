@@ -15,7 +15,7 @@ import {
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializeBookPdf, serializePoemPdf,
   appendBrowserPoemRevision, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, restoreBrowserPoemDraft, serializePoem, writePoemFile,
-  type BrowserPoemDraft, type BrowserPoemRevision, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
+  type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
@@ -216,6 +216,7 @@ function App() {
   const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
   const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
   const [spellingErrors, setSpellingErrors] = useState<string[]>([]);
+  const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>({ pageSize: 'letter', margins: 'standard' });
 
   useEffect(() => {
     if (editorRef.current) { editorRef.current.innerHTML = html; savedHtml.current = html; }
@@ -838,7 +839,7 @@ function App() {
     });
   };
   const exportPoem = (kind: WritablePoemFileFormat | 'pdf') => {
-    const content = kind === 'pdf' ? serializePoemPdf(title, text, html) : serializePoem(title, text, kind, html);
+    const content = kind === 'pdf' ? serializePoemPdf(title, text, html, pdfExportOptions) : serializePoem(title, text, kind, html);
     const fileName = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'poem'}.${kind}`;
     downloadPoemFile(fileName, content, kind);
     setModal(null); setToast(`Poem exported as ${kind.toUpperCase()}`);
@@ -849,7 +850,7 @@ function App() {
       const poems = drafts
         .filter((draft) => draft.bookId === bookToExport.id)
         .map((draft) => ({ title: draft.title, text: cleanText(draft.editorHtml) }));
-      const content = serializeBookPdf(bookToExport.title, poems);
+      const content = serializeBookPdf(bookToExport.title, poems, pdfExportOptions);
       const slug = bookToExport.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'poetry-book';
       downloadPoemFile(`${slug}.pdf`, content, 'pdf');
       setModal(null);
@@ -872,6 +873,34 @@ function App() {
   const applyForm = (form: FormEntry) => {
     setFormLabel(form.name); setModal(null); setToast(`${form.name} reference loaded`);
   };
+  const renderPdfExportOptions = () => <div className="form-grid" style={{ margin: '0 0 12px' }}>
+    <label>
+      <span className="field-label">Paper size</span>
+      <select
+        className="text-field"
+        value={pdfExportOptions.pageSize}
+        onChange={(event) => setPdfExportOptions((previous) => ({ ...previous, pageSize: event.target.value as PdfExportOptions['pageSize'] }))}
+        data-testid="select-pdf-page-size"
+      >
+        <option value="letter">Letter · 8.5 × 11 in</option>
+        <option value="a4">A4 · 210 × 297 mm</option>
+        <option value="a5">A5 · 148 × 210 mm</option>
+      </select>
+    </label>
+    <label>
+      <span className="field-label">Margins</span>
+      <select
+        className="text-field"
+        value={pdfExportOptions.margins}
+        onChange={(event) => setPdfExportOptions((previous) => ({ ...previous, margins: event.target.value as PdfExportOptions['margins'] }))}
+        data-testid="select-pdf-margins"
+      >
+        <option value="narrow">Narrow · 0.5 in</option>
+        <option value="standard">Standard · 1 in</option>
+        <option value="wide">Wide · 1.25 in</option>
+      </select>
+    </label>
+  </div>;
   const insertTab = () => {
     editorRef.current?.focus();
     document.execCommand('insertText', false, tabStops === '2 spaces' ? '  ' : tabStops === '8 spaces' ? '        ' : '    ');
@@ -1065,7 +1094,7 @@ function App() {
         <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
           <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
           {modal === 'book-export' ? <><div className="panel-card">
-              <div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Download as PDF</strong><p>Each poem starts on a new page. Long poems continue onto additional pages.</p><button className="button primary" style={{ marginTop: 10 }} onClick={exportBookAsPdf} data-testid="button-download-book-pdf"><Download/>Download book PDF</button></div>
+              <div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Download as PDF</strong><p>Choose a paper size and margins. Each poem starts on a new page; long poems continue onto additional pages.</p>{renderPdfExportOptions()}<button className="button primary" style={{ marginTop: 10 }} onClick={exportBookAsPdf} data-testid="button-download-book-pdf"><Download/>Download book PDF</button></div>
               <div className="form-item"><strong>Export book file</strong><p>Save a .poetrybook copy you can import later, including poem text and supported styling.</p><button className="button" style={{ marginTop: 10 }} onClick={exportBookArchive} data-testid="button-export-book-file"><Download/>Export .poetrybook</button></div>
             </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Done</button></div></> :
           modal === 'history' ? <><div className="history-layout">
@@ -1085,7 +1114,7 @@ function App() {
                 <pre>{cleanText(selectedRevision.editorHtml) || 'This version has no manuscript text.'}</pre>
               </section>}
             </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Cancel</button><button className="button primary" disabled={!selectedRevision} onClick={restoreRevision} data-testid="button-restore-version"><History/>Restore this version</button></div></> :
-          modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>A fixed-layout copy with your title, lines, and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
+          modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>Choose a paper size and margins for a fixed-layout copy.</p>{renderPdfExportOptions()}<button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
             <><div className="form-grid">
               <label><span className="field-label">Tab stop</span><select className="text-field" value={tabStops} onChange={(event) => setTabStops(event.target.value)} data-testid="select-tab-stops"><option>2 spaces</option><option>4 spaces</option><option>8 spaces</option></select></label>
               <label><span className="field-label">Editor size</span><select className="text-field" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} data-testid="settings-font-size">{[16,17,18,19,20,22,24,28].map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>

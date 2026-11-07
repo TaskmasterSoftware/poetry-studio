@@ -288,7 +288,8 @@ function wrapPdfLine(value: string, maxCharacters: number) {
   return wrapped;
 }
 
-function assemblePdf(title: string, pages: string[][]) {
+function assemblePdf(title: string, pages: string[][], options: PdfExportOptions) {
+  const { width, height } = pdfPageDimensions[options.pageSize];
   const objects: string[] = [];
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${7 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
@@ -301,7 +302,7 @@ function assemblePdf(title: string, pages: string[][]) {
     const pageNumber = 7 + index * 2;
     const contentNumber = pageNumber + 1;
     const stream = `${commands.join('\n')}\n`;
-    objects[pageNumber] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents ${contentNumber} 0 R >>`;
+    objects[pageNumber] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents ${contentNumber} 0 R >>`;
     objects[contentNumber] = `<< /Length ${stream.length} >>\nstream\n${stream}endstream`;
   });
 
@@ -320,6 +321,36 @@ function assemblePdf(title: string, pages: string[][]) {
   }
   pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R /Info ${infoNumber} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
   return pdf;
+}
+
+export type PdfPageSize = 'letter' | 'a4' | 'a5';
+export type PdfMarginPreset = 'narrow' | 'standard' | 'wide';
+export interface PdfExportOptions {
+  pageSize: PdfPageSize;
+  margins: PdfMarginPreset;
+}
+
+export const defaultPdfExportOptions: PdfExportOptions = { pageSize: 'letter', margins: 'standard' };
+
+const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> = {
+  letter: { width: 612, height: 792 },
+  a4: { width: 595.28, height: 841.89 },
+  a5: { width: 419.53, height: 595.28 },
+};
+const pdfMarginPoints: Record<PdfMarginPreset, number> = { narrow: 36, standard: 72, wide: 90 };
+
+function pdfLayout(options: PdfExportOptions) {
+  const { width, height } = pdfPageDimensions[options.pageSize];
+  const margin = pdfMarginPoints[options.margins];
+  const contentWidth = width - margin * 2;
+  return {
+    width,
+    height,
+    margin,
+    contentWidth,
+    bodyCharacters: Math.max(1, Math.floor(contentWidth / 5.5)),
+    titleCharacters: Math.max(1, Math.floor(contentWidth / 10)),
+  };
 }
 
 type PdfCharacter = { value: string; style: ExportInlineStyle };
@@ -382,21 +413,22 @@ function appendStyledPdfLine(
   commands: string[],
   runs: ExportRun[],
   y: number,
+  layout: ReturnType<typeof pdfLayout>,
   align: 'left' | 'center' | 'right' | 'justify' | undefined,
   justify: boolean,
 ) {
   const totalText = runs.map((run) => run.text).join('');
   const lineWidth = approximatePdfTextWidth(totalText, 11);
-  const availableWidth = 468;
+  const availableWidth = layout.contentWidth;
   const wordSpaces = (totalText.match(/ /g) || []).length;
   const wordSpacing = justify && wordSpaces > 0
     ? Math.max(0, (availableWidth - lineWidth) / wordSpaces)
     : 0;
   let x = align === 'center'
-    ? 306 - lineWidth / 2
+    ? layout.margin + availableWidth / 2 - lineWidth / 2
     : align === 'right'
-      ? 540 - lineWidth
-      : 72;
+      ? layout.width - layout.margin - lineWidth
+      : layout.margin;
 
   for (const run of runs) {
     const font = pdfFont(run.style);
@@ -409,19 +441,21 @@ function appendStyledPdfLine(
   }
 }
 
-function buildPdf(title: string, text: string, editorHtml?: string) {
+function buildPdf(title: string, text: string, editorHtml: string | undefined, options: PdfExportOptions) {
+  const layout = pdfLayout(options);
   const pages: string[][] = [[]];
-  let y = 720;
+  let y = layout.height - layout.margin;
   const addPage = () => {
     pages.push([]);
-    y = 720;
+    y = layout.height - layout.margin;
   };
   const addText = (value: string, font: 'F1' | 'F2', size: number) => {
-    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
+    pages[pages.length - 1].push(`BT /${font} ${size} Tf ${layout.margin} ${y} Td <${winAnsiHex(value)}> Tj ET`);
   };
 
-  const titleLines = wrapPdfLine(title.trim() || 'Untitled poem', 42);
+  const titleLines = wrapPdfLine(title.trim() || 'Untitled poem', layout.titleCharacters);
   for (const line of titleLines) {
+    if (y < layout.margin + 20) addPage();
     addText(line, 'F2', 20);
     y -= 25;
   }
@@ -431,17 +465,19 @@ function buildPdf(title: string, text: string, editorHtml?: string) {
   for (const paragraph of paragraphs) {
     const paragraphLines = splitPdfParagraphLines(paragraph.runs);
     if (paragraphLines.every((line) => !line.length)) {
+      if (y - 12 < layout.margin) addPage();
       y -= 12;
       continue;
     }
     for (const paragraphLine of paragraphLines) {
-      const wrappedLines = wrapPdfRuns(paragraphLine, 88);
+      const wrappedLines = wrapPdfRuns(paragraphLine, layout.bodyCharacters);
       for (const [wrappedLineIndex, lineRuns] of wrappedLines.entries()) {
-        if (y < 72) addPage();
+        if (y < layout.margin) addPage();
         appendStyledPdfLine(
           pages[pages.length - 1],
           lineRuns,
           y,
+          layout,
           paragraph.align,
           paragraph.align === 'justify' && wrappedLineIndex < wrappedLines.length - 1,
         );
@@ -450,57 +486,70 @@ function buildPdf(title: string, text: string, editorHtml?: string) {
     }
   }
 
-  return assemblePdf(title, pages);
+  return assemblePdf(title, pages, options);
 }
 
-function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[]) {
+function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[], options: PdfExportOptions) {
+  const layout = pdfLayout(options);
   const pages: string[][] = [[]];
-  let y = 720;
+  let y = layout.height - layout.margin;
   const addPage = () => {
     pages.push([]);
-    y = 720;
+    y = layout.height - layout.margin;
   };
   const addText = (value: string, font: 'F1' | 'F2', size: number) => {
-    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
+    pages[pages.length - 1].push(`BT /${font} ${size} Tf ${layout.margin} ${y} Td <${winAnsiHex(value)}> Tj ET`);
   };
 
   poems.forEach((poem, poemIndex) => {
     if (poemIndex > 0) addPage();
-    for (const line of wrapPdfLine(bookTitle.trim() || 'Untitled book', 88)) {
-      if (y < 72) addPage();
+    for (const line of wrapPdfLine(bookTitle.trim() || 'Untitled book', layout.bodyCharacters)) {
+      if (y < layout.margin + 12) addPage();
       addText(line, 'F1', 9);
       y -= 12;
     }
+    if (y - 12 < layout.margin) addPage();
     y -= 12;
-    for (const line of wrapPdfLine(poem.title.trim() || 'Untitled poem', 42)) {
-      if (y < 72) addPage();
+    for (const line of wrapPdfLine(poem.title.trim() || 'Untitled poem', layout.titleCharacters)) {
+      if (y < layout.margin + 20) addPage();
       addText(line, 'F2', 20);
       y -= 25;
     }
+    if (y - 12 < layout.margin) addPage();
     y -= 12;
     for (const sourceLine of poem.text.replace(/\r\n?/g, '\n').split('\n')) {
       if (!sourceLine) {
+        if (y - 12 < layout.margin) addPage();
         y -= 12;
         continue;
       }
-      for (const line of wrapPdfLine(sourceLine, 88)) {
-        if (y < 72) addPage();
+      for (const line of wrapPdfLine(sourceLine, layout.bodyCharacters)) {
+        if (y < layout.margin) addPage();
         addText(line, 'F1', 11);
         y -= 15;
       }
     }
   });
 
-  return assemblePdf(bookTitle, pages);
+  return assemblePdf(bookTitle, pages, options);
 }
 
-export function serializePoemPdf(title: string, text: string, editorHtml?: string) {
-  return new Blob([buildPdf(title, text, editorHtml)], { type: 'application/pdf' });
+export function serializePoemPdf(
+  title: string,
+  text: string,
+  editorHtml?: string,
+  options: PdfExportOptions = defaultPdfExportOptions,
+) {
+  return new Blob([buildPdf(title, text, editorHtml, options)], { type: 'application/pdf' });
 }
 
-export function serializeBookPdf(bookTitle: string, poems: { title: string; text: string }[]) {
+export function serializeBookPdf(
+  bookTitle: string,
+  poems: { title: string; text: string }[],
+  options: PdfExportOptions = defaultPdfExportOptions,
+) {
   if (!poems.length) throw new Error('Add at least one poem before downloading this book.');
-  return new Blob([buildBookPdf(bookTitle, poems)], { type: 'application/pdf' });
+  return new Blob([buildBookPdf(bookTitle, poems, options)], { type: 'application/pdf' });
 }
 
 export function downloadPoemFile(fileName: string, content: string | Blob, format: DownloadablePoemFileFormat) {

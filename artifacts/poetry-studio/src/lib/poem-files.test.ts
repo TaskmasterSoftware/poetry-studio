@@ -4,7 +4,7 @@ import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
   appendBrowserPoemRevision, choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, readPoemFile,
-  restoreBrowserPoemDraft, serializePoem, serializePoemPdf, writePoemFile,
+  restoreBrowserPoemDraft, serializeBookPdf, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
 import { readRtf } from "./document-import";
@@ -325,6 +325,34 @@ test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and
 
   const multipagePdf = await serializePoemPdf("Long poem", Array.from({ length: 120 }, (_, index) => `Line ${index + 1}`).join("\n")).text();
   assert.match(multipagePdf, /\/Count [2-9]\d*/);
+});
+
+test("applies selected PDF page size and margins to every poem and book page", async () => {
+  const longPoem = Array.from({ length: 100 }, (_, index) => `A line for page ${index + 1}`).join("\n");
+  const poemPdf = await serializePoemPdf("Long poem", longPoem, undefined, {
+    pageSize: "a5",
+    margins: "wide",
+  }).text();
+
+  const a5PageCount = poemPdf.match(/\/MediaBox \[0 0 419\.53 595\.28\]/g)?.length || 0;
+  assert.ok(a5PageCount > 1, "the long poem should continue onto multiple A5 pages");
+  assert.equal(Number(poemPdf.match(/\/Count (\d+)/)?.[1]), a5PageCount);
+  for (const [, x, y] of poemPdf.matchAll(/BT \/F[12] \d+ Tf ([\d.]+) ([\d.]+) Td/g)) {
+    assert.ok(Number(x) >= 90, "wide left margins should be applied to all text");
+    assert.ok(Number(y) >= 90, "text should remain above the bottom margin on every page");
+  }
+
+  const bookPdf = await serializeBookPdf("Collected poems", [
+    { title: "First", text: longPoem },
+    { title: "Second", text: "A short poem" },
+  ], { pageSize: "a4", margins: "narrow" }).text();
+  const a4PageCount = bookPdf.match(/\/MediaBox \[0 0 595\.28 841\.89\]/g)?.length || 0;
+  assert.ok(a4PageCount > 1);
+  assert.equal(Number(bookPdf.match(/\/Count (\d+)/)?.[1]), a4PageCount);
+  for (const [, x, y] of bookPdf.matchAll(/BT \/F[12] \d+ Tf ([\d.]+) ([\d.]+) Td/g)) {
+    assert.ok(Number(x) >= 36, "narrow left margins should be applied to all text");
+    assert.ok(Number(y) >= 36, "book text should remain above the bottom margin on every page");
+  }
 });
 
 test("exports PDF emphasis and paragraph alignment while keeping plain text styling unchanged", async () => {
