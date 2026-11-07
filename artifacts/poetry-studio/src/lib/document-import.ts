@@ -42,31 +42,275 @@ function rtfText(value: string) {
   }).join("");
 }
 
-function rtfParagraphs(text: string) {
-  return text.replace(/\r\n?/g, "\n").split("\n").map(rtfText).join("\\par\n");
+type ExportInlineStyle = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  superscript?: boolean;
+  subscript?: boolean;
+};
+type ExportRun = { text: string; style: ExportInlineStyle };
+type ExportParagraph = {
+  runs: ExportRun[];
+  align?: "left" | "center" | "right" | "justify";
+  left?: string;
+  right?: string;
+  firstLine?: string;
+};
+
+const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "P", "PRE"]);
+const editorInlineTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "DEL", "SUP", "SUB"]);
+
+function mergeExportStyles(...styles: ExportInlineStyle[]): ExportInlineStyle {
+  return Object.assign({}, ...styles);
 }
 
-function docxParagraph(line: string, isTitle = false) {
-  if (!line && !isTitle) return "<w:p/>";
-  const runs = line.split("\t").map((part, index) => {
-    const text = `<w:t xml:space="preserve">${escapeXml(validXmlText(part))}</w:t>`;
-    return `${index ? "<w:r><w:tab/></w:r>" : ""}<w:r>${text}</w:r>`;
+function editorInlineStyle(element: Element, inherited: ExportInlineStyle): ExportInlineStyle {
+  const style = mergeExportStyles(inherited);
+  const tagName = element.tagName.toUpperCase();
+  if (["B", "STRONG"].includes(tagName)) style.bold = true;
+  if (["I", "EM"].includes(tagName)) style.italic = true;
+  if (tagName === "U") style.underline = true;
+  if (["S", "STRIKE", "DEL"].includes(tagName)) style.strike = true;
+  if (tagName === "SUP") style.superscript = true;
+  if (tagName === "SUB") style.subscript = true;
+
+  const css = element.getAttribute("style") || "";
+  for (const declaration of css.split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim().toLowerCase();
+    if (property === "font-weight" && value) style.bold = value === "bold" || Number(value) >= 600;
+    if (property === "font-style" && value) style.italic = value === "italic" || value === "oblique";
+    if (property === "text-decoration" || property === "text-decoration-line") {
+      if (value) {
+        style.underline = value.includes("underline");
+        style.strike = value.includes("line-through");
+      }
+    }
+    if (property === "vertical-align") {
+      if (value === "super") style.superscript = true;
+      if (value === "sub") style.subscript = true;
+    }
+  }
+  return style;
+}
+
+function safeCssMeasure(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:pt|in|cm|mm|px|pc)$/i.test(normalized) ? normalized : "";
+}
+
+function cssMeasureToTwips(value: string) {
+  const match = value.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))(pt|in|cm|mm|px|pc)$/i);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  const pointsPerUnit: Record<string, number> = {
+    pt: 1, in: 72, cm: 72 / 2.54, mm: 72 / 25.4, px: 0.75, pc: 12,
+  };
+  return Math.round(amount * pointsPerUnit[match[2].toLowerCase()] * 20);
+}
+
+function editorParagraphStyle(element: Element): Pick<ExportParagraph, "align" | "left" | "right" | "firstLine"> {
+  const declarations: Record<string, string> = {};
+  for (const declaration of (element.getAttribute("style") || "").split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) continue;
+    declarations[declaration.slice(0, separator).trim().toLowerCase()] = declaration.slice(separator + 1).trim().toLowerCase();
+  }
+  const alignment = declarations["text-align"];
+  return {
+    align: ["left", "center", "right", "justify"].includes(alignment)
+      ? alignment as ExportParagraph["align"]
+      : undefined,
+    left: safeCssMeasure(declarations["margin-left"] || ""),
+    right: safeCssMeasure(declarations["margin-right"] || ""),
+    firstLine: safeCssMeasure(declarations["text-indent"] || ""),
+  };
+}
+
+function editorParagraphRuns(nodes: Node[], inherited: ExportInlineStyle = {}): ExportRun[] {
+  const runs: ExportRun[] = [];
+  const append = (text: string, style: ExportInlineStyle) => {
+    if (!text) return;
+    const previous = runs[runs.length - 1];
+    if (previous && JSON.stringify(previous.style) === JSON.stringify(style)) previous.text += text;
+    else runs.push({ text, style });
+  };
+  const visit = (node: Node, style: ExportInlineStyle) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      append(node.textContent || "", style);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const element = node as Element;
+    const tagName = element.tagName.toUpperCase();
+    const nextStyle = editorInlineStyle(element, style);
+    if (tagName === "BR") {
+      append("\n", style);
+    } else if (tagName === "WBR") {
+      return;
+    } else if (editorBlockTags.has(tagName)) {
+      return;
+    } else if (editorInlineTags.has(tagName) || element.hasAttribute("style")) {
+      Array.from(element.childNodes).forEach((child) => visit(child, nextStyle));
+    } else {
+      Array.from(element.childNodes).forEach((child) => visit(child, style));
+    }
+  };
+  nodes.forEach((node) => visit(node, inherited));
+  return runs;
+}
+
+function editorParagraphs(source: string | undefined, text: string): ExportParagraph[] {
+  if (source && typeof DOMParser !== "undefined") {
+    const document = new DOMParser().parseFromString(`<html><body>${source}</body></html>`, "text/html");
+    const root = document.body || document.getElementsByTagName("body")[0] || document.documentElement;
+    if (!root) return text.replace(/\r\n?/g, "\n").split("\n").map((line) => ({
+      runs: line ? [{ text: line, style: {} }] : [],
+    }));
+    const paragraphs: ExportParagraph[] = [];
+    const visitContainer = (container: ParentNode) => {
+      let inlineNodes: Node[] = [];
+      const flushInline = () => {
+        if (!inlineNodes.length) return;
+        paragraphs.push({ runs: editorParagraphRuns(inlineNodes) });
+        inlineNodes = [];
+      };
+      for (const node of Array.from(container.childNodes)) {
+        if (node.nodeType === Node.ELEMENT_NODE && editorBlockTags.has((node as Element).tagName.toUpperCase())) {
+          const block = node as Element;
+          const nestedBlocks = Array.from(block.childNodes).some((child) =>
+            child.nodeType === Node.ELEMENT_NODE
+            && editorBlockTags.has((child as Element).tagName.toUpperCase()),
+          );
+          if (nestedBlocks) {
+            flushInline();
+            visitContainer(block);
+          } else {
+            flushInline();
+            const children = Array.from(block.childNodes);
+            const isEmptyLine = children.some((child) =>
+              child.nodeType === Node.ELEMENT_NODE
+              && (child as Element).tagName.toUpperCase() === "BR",
+            ) && children.every((child) =>
+              (child.nodeType === Node.ELEMENT_NODE && (child as Element).tagName.toUpperCase() === "BR")
+              || (child.nodeType === Node.TEXT_NODE && !(child.textContent || "").trim()),
+            );
+            paragraphs.push({
+              runs: isEmptyLine ? [] : editorParagraphRuns(children),
+              ...editorParagraphStyle(block),
+            });
+          }
+        } else if (node.nodeType === Node.TEXT_NODE && !(node.textContent || "").trim()) {
+          continue;
+        } else {
+          inlineNodes.push(node);
+        }
+      }
+      flushInline();
+    };
+    visitContainer(root);
+    if (paragraphs.length) return paragraphs;
+  }
+  return text.replace(/\r\n?/g, "\n").split("\n").map((line) => ({
+    runs: line ? [{ text: line, style: {} }] : [],
+  }));
+}
+
+function runsPlainText(runs: ExportRun[]) {
+  return runs.map((run) => run.text).join("");
+}
+
+function docxRun(run: ExportRun) {
+  const properties = [
+    run.style.bold ? "<w:b/>" : "",
+    run.style.italic ? "<w:i/>" : "",
+    run.style.underline ? '<w:u w:val="single"/>' : "",
+    run.style.strike ? "<w:strike/>" : "",
+    run.style.superscript ? '<w:vertAlign w:val="superscript"/>' : "",
+    run.style.subscript ? '<w:vertAlign w:val="subscript"/>' : "",
+  ].filter(Boolean).join("");
+  const content = run.text.split(/(\n|\t)/).map((part) => {
+    if (part === "\n") return "<w:br/>";
+    if (part === "\t") return "<w:tab/>";
+    return part ? `<w:t xml:space="preserve">${escapeXml(validXmlText(part))}</w:t>` : "";
   }).join("");
-  return `<w:p>${isTitle ? '<w:pPr><w:pStyle w:val="Title"/></w:pPr>' : ""}${runs}</w:p>`;
+  return `<w:r>${properties ? `<w:rPr>${properties}</w:rPr>` : ""}${content}</w:r>`;
 }
 
-function odtParagraph(line: string, isTitle = false) {
-  const content = line.split("\t").map((part) => escapeXml(validXmlText(part))).join("<text:tab/>");
-  if (!line && !isTitle) return "<text:p/>";
-  return isTitle
-    ? `<text:h text:outline-level="1">${content}</text:h>`
-    : `<text:p>${content}</text:p>`;
+function docxParagraph(paragraph: ExportParagraph, isTitle = false) {
+  const line = runsPlainText(paragraph.runs);
+  if (!line && !isTitle) return "<w:p/>";
+  const properties = isTitle
+    ? '<w:pStyle w:val="Title"/>'
+    : [
+      paragraph.align ? `<w:jc w:val="${paragraph.align}"/>` : "",
+      (() => {
+        const left = cssMeasureToTwips(paragraph.left || "");
+        const right = cssMeasureToTwips(paragraph.right || "");
+        const firstLine = cssMeasureToTwips(paragraph.firstLine || "");
+        return left !== undefined || right !== undefined || firstLine !== undefined
+          ? `<w:ind${left !== undefined ? ` w:left="${left}"` : ""}${right !== undefined ? ` w:right="${right}"` : ""}${firstLine !== undefined ? ` w:firstLine="${firstLine}"` : ""}/>`
+          : "";
+      })(),
+    ].filter(Boolean).join("");
+  const runs = paragraph.runs.map(docxRun).join("");
+  return `<w:p>${properties ? `<w:pPr>${properties}</w:pPr>` : ""}${runs || "<w:r><w:t></w:t></w:r>"}</w:p>`;
 }
 
-function officeBody(title: string, text: string, paragraph: (line: string, isTitle?: boolean) => string) {
-  const titleParagraph = title.trim() ? `${paragraph(title, true)}` : "";
-  const poemParagraphs = text.replace(/\r\n?/g, "\n").split("\n").map((line) => paragraph(line)).join("");
-  return `${titleParagraph}${poemParagraphs}`;
+function odtInlineStyles(paragraphs: ExportParagraph[]) {
+  const styles = new Map<string, ExportInlineStyle>();
+  for (const paragraph of paragraphs) for (const run of paragraph.runs) {
+    if (Object.values(run.style).some(Boolean)) styles.set(JSON.stringify(run.style), run.style);
+  }
+  const entries = Array.from(styles.entries());
+  const names = new Map(entries.map(([key], index) => [key, `PoemText${index + 1}`]));
+  const xml = entries.map(([key, style]) => {
+    const properties = [
+      style.bold ? 'fo:font-weight="bold"' : "",
+      style.italic ? 'fo:font-style="italic"' : "",
+      style.underline ? 'style:text-underline-style="solid"' : "",
+      style.strike ? 'style:text-line-through-style="solid"' : "",
+      style.superscript ? 'style:text-position="super 58%"' : "",
+      style.subscript ? 'style:text-position="sub 58%"' : "",
+    ].filter(Boolean).join(" ");
+    return `<style:style style:name="${names.get(key)}" style:family="text"><style:text-properties ${properties}/></style:style>`;
+  }).join("");
+  return { names, xml };
+}
+
+function odtRun(run: ExportRun, names: Map<string, string>) {
+  const content = run.text.split(/(\n|\t)/).map((part) => {
+    if (part === "\n") return "<text:line-break/>";
+    if (part === "\t") return "<text:tab/>";
+    return escapeXml(validXmlText(part));
+  }).join("");
+  const name = names.get(JSON.stringify(run.style));
+  return name ? `<text:span text:style-name="${name}">${content}</text:span>` : content;
+}
+
+function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>) {
+  const paragraphStyles: string[] = [];
+  const body = paragraphs.map((paragraph) => {
+    const content = paragraph.runs.map((run) => odtRun(run, names)).join("");
+    const styleAttributes = [
+      paragraph.align ? `fo:text-align="${paragraph.align}"` : "",
+      paragraph.left ? `fo:margin-left="${paragraph.left}"` : "",
+      paragraph.right ? `fo:margin-right="${paragraph.right}"` : "",
+      paragraph.firstLine ? `fo:text-indent="${paragraph.firstLine}"` : "",
+    ].filter(Boolean).join(" ");
+    const styleName = styleAttributes ? `PoemParagraph${paragraphStyles.length + 1}` : "";
+    if (styleName) {
+      paragraphStyles.push(`<style:style style:name="${styleName}" style:family="paragraph"><style:paragraph-properties ${styleAttributes}/></style:style>`);
+    }
+    return !runsPlainText(paragraph.runs)
+      ? "<text:p/>"
+      : `<text:p${styleName ? ` text:style-name="${styleName}"` : ""}>${content}</text:p>`;
+  }).join("");
+  return { body, paragraphStyles: paragraphStyles.join("") };
 }
 
 function asBlob(bytes: Uint8Array, type: string) {
@@ -74,18 +318,60 @@ function asBlob(bytes: Uint8Array, type: string) {
   return new Blob([copy], { type });
 }
 
-export function serializeRtf(title: string, text: string) {
+function rtfRun(run: ExportRun) {
+  const controls = [
+    run.style.bold ? "\\b" : "",
+    run.style.italic ? "\\i" : "",
+    run.style.underline ? "\\ul" : "",
+    run.style.strike ? "\\strike" : "",
+    run.style.superscript ? "\\super" : "",
+    run.style.subscript ? "\\sub" : "",
+  ].filter(Boolean).join("");
+  const content = run.text.split(/(\n|\t)/).map((part) =>
+    part === "\n" ? "\\line " : part === "\t" ? "\\tab " : rtfText(part),
+  ).join("");
+  return controls ? `{${controls} ${content}}` : content;
+}
+
+function rtfParagraph(paragraph: ExportParagraph) {
+  const controls = [
+    paragraph.align === "center" ? "\\qc" : "",
+    paragraph.align === "right" ? "\\qr" : "",
+    paragraph.align === "justify" ? "\\qj" : "",
+    paragraph.align === "left" ? "\\ql" : "",
+    paragraph.left ? (() => {
+      const value = cssMeasureToTwips(paragraph.left!);
+      return value === undefined ? "" : `\\li${value}`;
+    })() : "",
+    paragraph.right ? (() => {
+      const value = cssMeasureToTwips(paragraph.right!);
+      return value === undefined ? "" : `\\ri${value}`;
+    })() : "",
+    paragraph.firstLine ? (() => {
+      const value = cssMeasureToTwips(paragraph.firstLine!);
+      return value === undefined ? "" : `\\fi${value}`;
+    })() : "",
+  ].filter(Boolean).join("");
+  return `${controls ? `{${controls} ` : ""}${paragraph.runs.map(rtfRun).join("")}${controls ? "}" : ""}\\par\n`;
+}
+
+export function serializeRtf(title: string, text: string, editorHtml?: string) {
   const titleInfo = title.trim() ? `{\\info{\\title ${rtfText(title)}}}` : "";
   const visibleTitle = title.trim() ? `{\\b ${rtfText(title)}}\\par\n` : "";
+  const paragraphs = editorParagraphs(editorHtml, text);
   return new Blob(
-    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${titleInfo}\n${visibleTitle}${rtfParagraphs(text)}\n}`],
+    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${titleInfo}\n${visibleTitle}${paragraphs.map(rtfParagraph).join("")}}`],
     { type: "application/rtf" },
   );
 }
 
-export function serializeDocx(title: string, text: string) {
+export function serializeDocx(title: string, text: string, editorHtml?: string) {
+  const paragraphs = editorParagraphs(editorHtml, text);
+  const titleParagraph = title.trim()
+    ? `<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>${docxRun({ text: title, style: {} })}</w:p>`
+    : "";
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${officeBody(title, text, docxParagraph)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${titleParagraph}${paragraphs.map((paragraph) => docxParagraph(paragraph)).join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${escapeXml(validXmlText(title))}</dc:title></cp:coreProperties>`;
   const archive = zipSync({
     "[Content_Types].xml": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>'),
@@ -97,8 +383,14 @@ export function serializeDocx(title: string, text: string) {
   return asBlob(archive, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 }
 
-export function serializeOdt(title: string, text: string) {
-  const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:text>${officeBody(title, text, odtParagraph)}</office:text></office:body></office:document-content>`;
+export function serializeOdt(title: string, text: string, editorHtml?: string) {
+  const paragraphs = editorParagraphs(editorHtml, text);
+  const { names, xml: inlineStyles } = odtInlineStyles(paragraphs);
+  const styledParagraphs = odtParagraphs(paragraphs, names);
+  const titleContent = title.trim()
+    ? `<text:h text:outline-level="1">${escapeXml(validXmlText(title))}</text:h>`
+    : "";
+  const contentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2"><office:automatic-styles>${inlineStyles}${styledParagraphs.paragraphStyles}</office:automatic-styles><office:body><office:text>${titleContent}${styledParagraphs.body}</office:text></office:body></office:document-content>`;
   const archive = zipSync({
     mimetype: strToU8("application/vnd.oasis.opendocument.text"),
     "content.xml": strToU8(contentXml),

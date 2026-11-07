@@ -218,3 +218,49 @@ test("serializes RTF with escaped structural characters and unicode", async () =
   assert.ok(text.includes("\\u-10180?\\u-8409?"));
   assert.deepEqual(readRtf(text), { title: "Poem {title}", text: "A \\ line — 🌧" });
 });
+
+test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => {
+  enableXmlDom();
+  const title = "Night rain";
+  const text = "First bright\n\nLast";
+  const editorHtml = '<p style="text-align:center;margin-left:18pt;text-indent:9pt"><strong>First</strong> <em><u>bright</u></em></p><p><br/></p><p><span style="font-weight:700;font-style:italic">Last</span></p>';
+
+  const docx = serializePoem(title, text, "docx", editorHtml) as Blob;
+  const docxArchive = unzipSync(new Uint8Array(await docx.arrayBuffer()));
+  const docxXml = strFromU8(docxArchive["word/document.xml"]);
+  assert.match(docxXml, /<w:jc w:val="center"\/>/);
+  assert.match(docxXml, /w:left="360"/);
+  assert.match(docxXml, /w:firstLine="180"/);
+  assert.match(docxXml, /<w:b\/>/);
+  assert.match(docxXml, /<w:i\/>/);
+  assert.match(docxXml, /<w:u w:val="single"\/>/);
+  const importedDocx = await readPoemFile(new File([docx], "night-rain.docx"));
+  assert.equal(importedDocx.title, title);
+  assert.equal(importedDocx.text, text);
+  assert.match(importedDocx.editorHtml || "", /text-align:center/);
+  assert.match(importedDocx.editorHtml || "", /<strong>First<\/strong>/);
+
+  const rtf = serializePoem(title, text, "rtf", editorHtml) as Blob;
+  const rtfText = await rtf.text();
+  assert.match(rtfText, /\\qc/);
+  assert.match(rtfText, /\\li360/);
+  assert.match(rtfText, /\\fi180/);
+  assert.match(rtfText, /\\b First/);
+  assert.match(rtfText, /\\i\\ul bright/);
+  assert.deepEqual(readRtf(rtfText), { title, text });
+
+  const odt = serializePoem(title, text, "odt", editorHtml) as Blob;
+  const odtArchive = unzipSync(new Uint8Array(await odt.arrayBuffer()));
+  const odtXml = strFromU8(odtArchive["content.xml"]);
+  assert.match(odtXml, /fo:text-align="center"/);
+  assert.match(odtXml, /fo:margin-left="18pt"/);
+  assert.match(odtXml, /fo:text-indent="9pt"/);
+  assert.match(odtXml, /fo:font-weight="bold"/);
+  assert.match(odtXml, /fo:font-style="italic"/);
+  assert.match(odtXml, /style:text-underline-style="solid"/);
+  const importedOdt = await readPoemFile(new File([odt], "night-rain.odt"));
+  assert.equal(importedOdt.title, title);
+  assert.equal(importedOdt.text, text);
+  assert.match(importedOdt.editorHtml || "", /text-align:center/);
+  assert.match(importedOdt.editorHtml || "", /<strong>First<\/strong>/);
+});

@@ -185,9 +185,9 @@ export function poemTextToEditorHtml(text: string) {
 export function serializePoem(title: string, text: string, format: WritablePoemFileFormat, editorHtml?: string): string | Blob {
   if (format === 'txt') return `${title}\n\n${text}`;
   if (format === 'md') return `# ${title}\n\n${text}`;
-  if (format === 'rtf') return serializeRtf(title, text);
-  if (format === 'docx') return serializeDocx(title, text);
-  if (format === 'odt') return serializeOdt(title, text);
+  if (format === 'rtf') return serializeRtf(title, text, editorHtml);
+  if (format === 'docx') return serializeDocx(title, text, editorHtml);
+  if (format === 'odt') return serializeOdt(title, text, editorHtml);
   const content = sanitizeEditorHtml(editorHtml ?? poemTextToEditorHtml(text));
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${content}</article></body></html>`;
 }

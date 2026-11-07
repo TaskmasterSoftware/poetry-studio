@@ -385,7 +385,7 @@ function App() {
         if (editorUnchanged && titleUnchanged) {
           persistNow(currentHtml);
           setToast(format === 'rtf' || format === 'docx' || format === 'odt'
-            ? `Saved to ${handle.name}; unsupported formatting was not retained`
+            ? `Saved to ${handle.name}; supported emphasis and paragraph layout were retained`
             : `Saved to ${handle.name}`);
           setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
         } else {
@@ -400,7 +400,7 @@ function App() {
           if (editorUnchanged && titleUnchanged) persistNow(currentHtml);
           else setSavedAt('Newer edits need saving');
           setToast(format === 'rtf' || format === 'docx' || format === 'odt'
-            ? 'Could not update the original; an updated copy was downloaded without unsupported formatting'
+            ? 'Could not update the original; an updated copy was downloaded with supported styling'
             : 'Could not update the original file; an updated copy was downloaded');
         } else {
           setToast(error instanceof Error ? error.message : 'Could not save to this file.');
@@ -412,7 +412,7 @@ function App() {
       downloadPoemFile(openedSource.fileName, content!, format);
       persistNow(currentHtml);
       setToast(format === 'rtf' || format === 'docx' || format === 'odt'
-        ? 'Updated copy downloaded; unsupported formatting was not retained'
+        ? 'Updated copy downloaded with supported styling; browser draft also saved'
         : 'Updated copy downloaded; browser draft also saved');
       return;
     }

@@ -1,1 +1,2 @@
 - [Per-user cloud storage](per-user-cloud-storage.md) — each app user must authorize their own provider account; do not use the workspace owner's shared connection.
+- [HTML parsing in tests](html-parsing-tests.md) — Node's XML DOM shim is not a browser HTML parser; account for lowercase tag names and missing convenience properties.
