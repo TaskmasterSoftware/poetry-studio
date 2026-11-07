@@ -53,3 +53,5 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+artifacts/poetry-studio/test-results/
+artifacts/poetry-studio/playwright-report/
