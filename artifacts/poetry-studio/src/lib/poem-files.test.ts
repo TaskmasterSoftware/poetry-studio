@@ -202,6 +202,20 @@ test("imports RTF emphasis, paragraph alignment, line breaks, and blank stanzas"
   assert.match(poem.editorHtml || "", /<p style="text-align:right">Right<\/p>/);
 });
 
+test("decodes escaped RTF bytes using the declared code page and keeps the default", async () => {
+  const source = String.raw`{\rtf1\ansi\ansicpg1250{\info{\title \'c8eský}}\b \'c8eský\b0\par P\'f8\'edli\'9a}`;
+  const poem = await readPoemFile(new File([source], "cesky.rtf"));
+
+  assert.equal(poem.title, "Český");
+  assert.equal(poem.text, "Příliš");
+
+  const windows1252 = readRtf(String.raw`{\rtf1\ansi caf\'e9}`);
+  assert.equal(windows1252.text, "café");
+
+  const shiftJis = readRtf(String.raw`{\rtf1\ansi\ansicpg932 \'82\'a0}`);
+  assert.equal(shiftJis.text, "あ");
+});
+
 test("imports RTF superscript and subscript without changing nearby text or emphasis", async () => {
   const source = String.raw`{\rtf1\ansi{\info{\title Chemistry}}\b Chemistry\b0\par H{\sub 2}O and x{\super 2} {\b bold \super 3\nosupersub text}\line next line}`;
   const poem = await readPoemFile(new File([source], "chemistry.rtf"));

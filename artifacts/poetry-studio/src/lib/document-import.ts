@@ -1004,14 +1004,54 @@ export async function readOdt(file: File): Promise<{ title: string; text: string
   }
 }
 
-function decodeRtfByte(hex: string): string {
-  const value = Number.parseInt(hex, 16);
-  if (!Number.isFinite(value)) return "";
+const rtfCodePageEncodings: Record<number, string> = {
+  874: "windows-874",
+  932: "shift_jis",
+  936: "gbk",
+  949: "euc-kr",
+  950: "big5",
+  1200: "utf-16le",
+  1250: "windows-1250",
+  1251: "windows-1251",
+  1252: "windows-1252",
+  1253: "windows-1253",
+  1254: "windows-1254",
+  1255: "windows-1255",
+  1256: "windows-1256",
+  1257: "windows-1257",
+  1258: "windows-1258",
+  65001: "utf-8",
+  28591: "iso-8859-1",
+  28592: "iso-8859-2",
+  28593: "iso-8859-3",
+  28594: "iso-8859-4",
+  28595: "iso-8859-5",
+  28596: "iso-8859-6",
+  28597: "iso-8859-7",
+  28598: "iso-8859-8",
+  28599: "iso-8859-9",
+  28603: "iso-8859-13",
+  28605: "iso-8859-15",
+};
+
+function rtfEncoding(source: string): string {
+  const codePage = Number(source.match(/\\ansicpg(\d+)/i)?.[1] || 1252);
+  return rtfCodePageEncodings[codePage] || `windows-${codePage}`;
+}
+
+function decodeRtfBytes(bytes: number[], encoding: string): string {
   try {
-    return new TextDecoder("windows-1252").decode(new Uint8Array([value]));
+    return new TextDecoder(encoding).decode(new Uint8Array(bytes));
   } catch {
-    return String.fromCharCode(value);
+    return new TextDecoder("windows-1252").decode(new Uint8Array(bytes));
   }
+}
+
+function decodeRtfEscapedBytes(value: string, encoding: string): string {
+  return value.replace(/(?:\\'[\da-f]{2})+/gi, (escapedBytes) => {
+    const bytes = Array.from(escapedBytes.matchAll(/\\'([\da-f]{2})/gi), (match) => Number.parseInt(match[1], 16));
+    return decodeRtfBytes(bytes, encoding);
+  });
 }
 
 type RtfGroupState = {
@@ -1031,9 +1071,10 @@ function rtfParagraphHtml(paragraph: ImportedContent & { align?: RtfGroupState["
 }
 
 export function readRtf(source: string): { title: string; text: string; editorHtml: string } {
+  const encoding = rtfEncoding(source);
   const rawTitle = source.match(/\\title\b((?:\\.|[^{}])*)/i)?.[1] || "";
   const title = rawTitle
-    .replace(/\\'([\da-f]{2})/gi, (_match, hex: string) => decodeRtfByte(hex))
+    .replace(/(?:\\'[\da-f]{2})+/gi, (escapedBytes) => decodeRtfEscapedBytes(escapedBytes, encoding))
     .replace(/\\u(-?\d+)\??/g, (_match, value: string) => {
       const codeUnit = Number(value);
       return String.fromCharCode(codeUnit < 0 ? codeUnit + 65536 : codeUnit);
@@ -1101,12 +1142,17 @@ export function readRtf(source: string): { title: string; text: string; editorHt
     const next = source[index + 1];
     if (!next) break;
     if (next === "'" && /^[\da-f]{2}$/i.test(source.slice(index + 2, index + 4))) {
-      const decoded = decodeRtfByte(source.slice(index + 2, index + 4));
-      if (!group.skip) {
-        if (fallbackCharacters > 0) fallbackCharacters -= 1;
-        else append(decoded, group);
+      const bytes: number[] = [];
+      while (source[index] === "\\" && source[index + 1] === "'" && /^[\da-f]{2}$/i.test(source.slice(index + 2, index + 4))) {
+        bytes.push(Number.parseInt(source.slice(index + 2, index + 4), 16));
+        index += 4;
       }
-      index += 4;
+      const decodedCharacters = Array.from(decodeRtfBytes(bytes, encoding));
+      if (!group.skip) {
+        const skipped = Math.min(fallbackCharacters, decodedCharacters.length);
+        fallbackCharacters -= skipped;
+        append(decodedCharacters.slice(skipped).join(""), group);
+      }
       continue;
     }
     if ("\\{}".includes(next)) {
