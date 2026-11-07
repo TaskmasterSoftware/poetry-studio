@@ -202,6 +202,17 @@ test("imports RTF emphasis, paragraph alignment, line breaks, and blank stanzas"
   assert.match(poem.editorHtml || "", /<p style="text-align:right">Right<\/p>/);
 });
 
+test("imports RTF superscript and subscript without changing nearby text or emphasis", async () => {
+  const source = String.raw`{\rtf1\ansi{\info{\title Chemistry}}\b Chemistry\b0\par H{\sub 2}O and x{\super 2} {\b bold \super 3\nosupersub text}\line next line}`;
+  const poem = await readPoemFile(new File([source], "chemistry.rtf"));
+
+  assert.equal(poem.title, "Chemistry");
+  assert.equal(poem.text, "H2O and x2 bold 3text\nnext line");
+  assert.match(poem.editorHtml || "", /H<sub>2<\/sub>O and x<sup>2<\/sup>/);
+  assert.match(poem.editorHtml || "", /<strong>bold <\/strong><strong><sup>3<\/sup><\/strong><strong>text<\/strong>/);
+  assert.match(poem.editorHtml || "", /<br>next line/);
+});
+
 test("keeps plain RTF title, line breaks, and stanza spacing compatible", async () => {
   const source = String.raw`{\rtf1\ansi{\info{\title Plain}}\b Plain\b0\par First line\par\par Second line\line continued\par}`;
   const poem = await readPoemFile(new File([source], "plain.rtf"));

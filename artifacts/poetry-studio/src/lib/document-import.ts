@@ -1137,6 +1137,15 @@ export function readRtf(source: string): { title: string; text: string; editorHt
       if (word === "i") group.style.italic = enabled;
       if (word === "ul" || word === "ulw") group.style.underline = enabled;
       if (word === "strike") group.style.strike = enabled;
+    } else if (word === "super") {
+      group.style.superscript = true;
+      group.style.subscript = false;
+    } else if (word === "sub") {
+      group.style.superscript = false;
+      group.style.subscript = true;
+    } else if (word === "nosupersub") {
+      group.style.superscript = false;
+      group.style.subscript = false;
     } else if (word === "ulnone") {
       group.style.underline = false;
     } else if (word === "plain") {
