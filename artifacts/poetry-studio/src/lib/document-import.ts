@@ -62,6 +62,8 @@ export type ExportParagraph = {
   listType?: "ordered" | "unordered";
   listLevel?: number;
   listId?: number;
+  listStart?: number;
+  listValue?: number;
 };
 
 const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "OL", "P", "PRE", "UL"]);
@@ -204,9 +206,15 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
     }));
     const paragraphs: ExportParagraph[] = [];
     let nextListId = 1;
+    const htmlListNumber = (element: Element, attribute: string) => {
+      const value = (element.getAttribute(attribute) || "").trim();
+      return /^[+-]?\d{1,6}$/.test(value) ? Number(value) : undefined;
+    };
     const visitList = (list: Element, level: number) => {
       const listId = nextListId++;
       const listType = list.tagName.toUpperCase() === "OL" ? "ordered" : "unordered";
+      const listStart = listType === "ordered" ? htmlListNumber(list, "start") : undefined;
+      let isFirstItem = true;
       for (const child of Array.from(list.childNodes)) {
         if (child.nodeType !== Node.ELEMENT_NODE || (child as Element).tagName.toUpperCase() !== "LI") continue;
         const item = child as Element;
@@ -220,7 +228,10 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
           listType,
           listLevel: level,
           listId,
+          listStart: isFirstItem ? listStart : undefined,
+          listValue: listType === "ordered" ? htmlListNumber(item, "value") : undefined,
         });
+        isFirstItem = false;
         const visitNestedLists = (container: ParentNode) => {
           for (const node of Array.from(container.childNodes)) {
             if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -313,14 +324,14 @@ function docxRun(run: ExportRun) {
   return `<w:r>${properties ? `<w:rPr>${properties}</w:rPr>` : ""}${content}</w:r>`;
 }
 
-function docxParagraph(paragraph: ExportParagraph, isTitle = false, numIds?: Map<number, number>) {
+function docxParagraph(paragraph: ExportParagraph, isTitle = false, numId?: number) {
   const line = runsPlainText(paragraph.runs);
   if (!line && !isTitle && paragraph.listId === undefined) return "<w:p/>";
   const properties = isTitle
     ? '<w:pStyle w:val="Title"/>'
     : [
       paragraph.listId !== undefined && paragraph.listLevel !== undefined
-        ? `<w:numPr><w:ilvl w:val="${paragraph.listLevel}"/><w:numId w:val="${numIds?.get(paragraph.listId) || paragraph.listId}"/></w:numPr>`
+        ? `<w:numPr><w:ilvl w:val="${paragraph.listLevel}"/><w:numId w:val="${numId || paragraph.listId}"/></w:numPr>`
         : "",
       paragraph.align ? `<w:jc w:val="${paragraph.align}"/>` : "",
       (() => {
@@ -339,7 +350,6 @@ function docxParagraph(paragraph: ExportParagraph, isTitle = false, numIds?: Map
 function docxNumbering(paragraphs: ExportParagraph[]) {
   const listIds = Array.from(new Set(paragraphs.filter((paragraph) => paragraph.listId !== undefined)
     .map((paragraph) => paragraph.listId!)));
-  const numIds = new Map(listIds.map((listId, index) => [listId, index + 1]));
   const abstractNums = listIds.map((listId, index) => {
     const group = paragraphs.filter((paragraph) => paragraph.listId === listId);
     const listType = group[0]?.listType || "unordered";
@@ -351,9 +361,34 @@ function docxNumbering(paragraphs: ExportParagraph[]) {
       const font = listType === "ordered" ? "" : '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr>';
       return `<w:lvl w:ilvl="${level}"><w:start w:val="1"/><w:numFmt w:val="${numberFormat}"/><w:lvlText w:val="${marker}"/><w:lvlJc w:val="left"/>${font}<w:pPr><w:tabs><w:tab w:val="num" w:pos="${indent}"/></w:tabs><w:ind w:left="${indent}" w:hanging="360"/></w:pPr></w:lvl>`;
     }).join("");
-    return `<w:abstractNum w:abstractNumId="${index + 1}"><w:multiLevelType w:val="multilevel"/>${levels}</w:abstractNum><w:num w:numId="${index + 1}"><w:abstractNumId w:val="${index + 1}"/></w:num>`;
+    return `<w:abstractNum w:abstractNumId="${index + 1}"><w:multiLevelType w:val="multilevel"/>${levels}</w:abstractNum>`;
   }).join("");
-  return { numIds, xml: `<w:numbering xmlns:w="${wordNamespace}">${abstractNums}</w:numbering>` };
+  const numberDefinitions = listIds.map((listId, index) =>
+    `<w:num w:numId="${index + 1}"><w:abstractNumId w:val="${index + 1}"/></w:num>`,
+  );
+  const baseNumIds = new Map(listIds.map((listId, index) => [listId, index + 1]));
+  const activeNumIds = new Map<string, number>();
+  const paragraphNumIds = new Map<number, number>();
+  let nextNumId = listIds.length + 1;
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraph.listId === undefined || paragraph.listLevel === undefined) return;
+    const level = Math.max(0, paragraph.listLevel);
+    const key = `${paragraph.listId}:${level}`;
+    let numId = activeNumIds.get(key) || baseNumIds.get(paragraph.listId)!;
+    const start = paragraph.listValue ?? paragraph.listStart;
+    if (start !== undefined) {
+      numId = nextNumId++;
+      numberDefinitions.push(
+        `<w:num w:numId="${numId}"><w:abstractNumId w:val="${baseNumIds.get(paragraph.listId)}"/><w:lvlOverride w:ilvl="${level}"><w:startOverride w:val="${start}"/></w:lvlOverride></w:num>`,
+      );
+    }
+    activeNumIds.set(key, numId);
+    paragraphNumIds.set(paragraphIndex, numId);
+  });
+  return {
+    paragraphNumIds,
+    xml: `<w:numbering xmlns:w="${wordNamespace}">${abstractNums}${numberDefinitions.join("")}</w:numbering>`,
+  };
 }
 
 function odtInlineStyles(paragraphs: ExportParagraph[]) {
@@ -412,6 +447,7 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
     paragraph: ExportParagraph;
     listId: number;
     listType: "ordered" | "unordered";
+    startValue?: number;
     children: OdtListItem[];
   };
   const root: Array<ExportParagraph | OdtListItem> = [];
@@ -428,6 +464,7 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
       paragraph,
       listId: paragraph.listId,
       listType: paragraph.listType,
+      startValue: paragraph.listValue ?? paragraph.listStart,
       children: [],
     };
     const parent = level > 0 ? stack[level - 1] : undefined;
@@ -441,12 +478,14 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
     for (let index = 0; index < items.length;) {
       const first = items[index];
       let end = index + 1;
-      while (end < items.length && items[end].listId === first.listId && items[end].listType === first.listType) end += 1;
+      while (end < items.length && items[end].listId === first.listId && items[end].listType === first.listType
+        && items[end].startValue === undefined) end += 1;
       const listStyle = first.listType === "ordered" ? "PoemNumberedList" : "PoemBulletedList";
       const listItems = items.slice(index, end).map((item) =>
         `<text:list-item>${paragraphXml(item.paragraph)}${renderItems(item.children)}</text:list-item>`,
       ).join("");
-      output += `<text:list text:style-name="${listStyle}">${listItems}</text:list>`;
+      const startValue = first.startValue !== undefined ? ` text:start-value="${first.startValue}"` : "";
+      output += `<text:list text:style-name="${listStyle}"${startValue}>${listItems}</text:list>`;
       index = end;
     }
     return output;
@@ -509,10 +548,10 @@ function rtfRun(run: ExportRun, fontIds: Map<string, number>) {
   return controls ? `{${controls} ${content}}` : content;
 }
 
-function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, number>, fontIds: Map<string, number>) {
+function rtfParagraph(paragraph: ExportParagraph, listNumber: number | undefined, fontIds: Map<string, number>) {
   const controls = [
     paragraph.listId !== undefined && paragraph.listLevel !== undefined
-      ? `\\ls${listNumbers.get(paragraph.listId) || 1}\\ilvl${paragraph.listLevel}`
+      ? `\\ls${listNumber || 1}\\ilvl${paragraph.listLevel}`
       : "",
     paragraph.align === "center" ? "\\qc" : "",
     paragraph.align === "right" ? "\\qr" : "",
@@ -538,9 +577,29 @@ function rtfParagraph(paragraph: ExportParagraph, listNumbers: Map<number, numbe
 function rtfListTables(paragraphs: ExportParagraph[]) {
   const listIds = Array.from(new Set(paragraphs.filter((paragraph) => paragraph.listId !== undefined)
     .map((paragraph) => paragraph.listId!)));
-  const listNumbers = new Map(listIds.map((listId, index) => [listId, index + 1]));
-  const listDefinitions = listIds.map((listId, index) => {
-    const group = paragraphs.filter((paragraph) => paragraph.listId === listId);
+  const instances: Array<{
+    listId: number;
+    listNumber: number;
+    startLevel?: number;
+    startValue?: number;
+  }> = listIds.map((listId, index) => ({ listId, listNumber: index + 1 }));
+  const activeListNumbers = new Map<string, number>();
+  const paragraphListNumbers = new Map<number, number>();
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraph.listId === undefined || paragraph.listLevel === undefined) return;
+    const level = Math.max(0, paragraph.listLevel);
+    const key = `${paragraph.listId}:${level}`;
+    let listNumber = activeListNumbers.get(key) || listIds.indexOf(paragraph.listId) + 1;
+    const start = paragraph.listValue ?? paragraph.listStart;
+    if (start !== undefined) {
+      listNumber = instances.length + 1;
+      instances.push({ listId: paragraph.listId, listNumber, startLevel: level, startValue: start });
+    }
+    activeListNumbers.set(key, listNumber);
+    paragraphListNumbers.set(paragraphIndex, listNumber);
+  });
+  const listDefinitions = instances.map((instance, index) => {
+    const group = paragraphs.filter((paragraph) => paragraph.listId === instance.listId);
     const listType = group[0]?.listType || "unordered";
     const maxLevel = Math.max(0, ...group.map((paragraph) => paragraph.listLevel || 0));
     const levels = Array.from({ length: maxLevel + 1 }, (_, level) => {
@@ -549,15 +608,16 @@ function rtfListTables(paragraphs: ExportParagraph[]) {
         ? `\\leveltext\\'02\\'${level.toString(16).padStart(2, "0")}.;}{\\levelnumbers\\'01;`
         : "\\leveltext\\'01\\'B7;}{\\levelnumbers;";
       const format = listType === "ordered" ? 0 : 23;
-      return `{\\listlevel\\levelnfc${format}\\leveljc0\\levelfollow0\\levelstartat1\\levelspace0\\levelindent${indent}{${levelText}}\\fi-360\\li${indent}}`;
+      const levelStart = instance.startLevel === level ? instance.startValue : 1;
+      return `{\\listlevel\\levelnfc${format}\\leveljc0\\levelfollow0\\levelstartat${levelStart}\\levelspace0\\levelindent${indent}{${levelText}}\\fi-360\\li${indent}}`;
     }).join("");
     const id = 1000 + index;
     return `{\\list\\listtemplateid${id}${levels}{\\listname ;}\\listid${id}}`;
   }).join("");
-  const overrides = listIds.map((listId, index) =>
+  const overrides = instances.map((instance, index) =>
     `{\\listoverride\\listid${1000 + index}\\listoverridecount0\\ls${index + 1}}`,
   ).join("");
-  return { listNumbers, tables: listDefinitions ? `{\\*\\listtable${listDefinitions}}{\\*\\listoverridetable${overrides}}` : "" };
+  return { paragraphListNumbers, tables: listDefinitions ? `{\\*\\listtable${listDefinitions}}{\\*\\listoverridetable${overrides}}` : "" };
 }
 
 export function serializeRtf(title: string, text: string, editorHtml?: string) {
@@ -576,7 +636,7 @@ export function serializeRtf(title: string, text: string, editorHtml?: string) {
     `{\\f${index}\\fnil\\fcharset0 ${rtfText(firstFontName(family))};}`,
   ).join("")}}`;
   return new Blob(
-    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${fontTable}${titleInfo}${lists.tables}\n${visibleTitle}${paragraphs.map((paragraph) => rtfParagraph(paragraph, lists.listNumbers, fontIds)).join("")}}`],
+    [`{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1 ${fontTable}${titleInfo}${lists.tables}\n${visibleTitle}${paragraphs.map((paragraph, index) => rtfParagraph(paragraph, lists.paragraphListNumbers.get(index), fontIds)).join("")}}`],
     { type: "application/rtf" },
   );
 }
@@ -588,7 +648,7 @@ export function serializeDocx(title: string, text: string, editorHtml?: string) 
     ? `<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>${docxRun({ text: title, style: {} })}</w:p>`
     : "";
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
- <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${titleParagraph}${paragraphs.map((paragraph) => docxParagraph(paragraph, false, numbering.numIds)).join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+ <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${titleParagraph}${paragraphs.map((paragraph, index) => docxParagraph(paragraph, false, numbering.paragraphNumIds.get(index))).join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${escapeXml(validXmlText(title))}</dc:title></cp:coreProperties>`;
   const archive = zipSync({
     "[Content_Types].xml": strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>'),

@@ -7,7 +7,7 @@ import {
   restoreBrowserPoemDraft, serializeBookPdf, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
-import { readRtf } from "./document-import";
+import { getEditorParagraphs, readRtf } from "./document-import";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -514,4 +514,41 @@ test("exports editable numbered and bulleted lists with nesting to office format
   const importedOdt = await readPoemFile(new File([odt], "list-poem.odt"));
   assert.equal(importedOdt.title, title);
   assert.equal(importedOdt.text, text);
+});
+
+test("preserves ordered-list starts and mid-list restarts in office exports", async () => {
+  enableXmlDom();
+  const editorHtml = '<ol start="4"><li>Fourth</li><li>Fifth</li><li value="12">Twelfth</li><li>Thirteenth</li></ol><ol start="7"><li>Seventh</li></ol>';
+  const text = "Fourth\nFifth\nTwelfth\nThirteenth\nSeventh";
+  const paragraphs = getEditorParagraphs(editorHtml, text);
+  assert.deepEqual(
+    paragraphs.map(({ listStart, listValue }) => [listStart, listValue]),
+    [[4, undefined], [undefined, undefined], [undefined, 12], [undefined, undefined], [7, undefined]],
+  );
+
+  const docx = serializePoem("Numbered poem", text, "docx", editorHtml) as Blob;
+  const docxArchive = unzipSync(new Uint8Array(await docx.arrayBuffer()));
+  const documentXml = strFromU8(docxArchive["word/document.xml"]);
+  const numberingXml = strFromU8(docxArchive["word/numbering.xml"]);
+  const docxNumIds = Array.from(documentXml.matchAll(/<w:numId w:val="(\d+)"\/>/g), (match) => match[1]);
+  assert.equal(docxNumIds.length, 5);
+  assert.equal(docxNumIds[0], docxNumIds[1]);
+  assert.notEqual(docxNumIds[1], docxNumIds[2]);
+  assert.equal(docxNumIds[2], docxNumIds[3]);
+  assert.match(numberingXml, /<w:startOverride w:val="4"\/>/);
+  assert.match(numberingXml, /<w:startOverride w:val="12"\/>/);
+  assert.match(numberingXml, /<w:startOverride w:val="7"\/>/);
+
+  const rtf = serializePoem("Numbered poem", text, "rtf", editorHtml) as Blob;
+  const rtfText = await rtf.text();
+  assert.match(rtfText, /\\levelstartat4/);
+  assert.match(rtfText, /\\levelstartat12/);
+  assert.match(rtfText, /\\levelstartat7/);
+  assert.deepEqual(Array.from(rtfText.matchAll(/\\ls(\d+)\\ilvl0/g), (match) => match[1]), ["3", "3", "4", "4", "5"]);
+
+  const odt = serializePoem("Numbered poem", text, "odt", editorHtml) as Blob;
+  const odtArchive = unzipSync(new Uint8Array(await odt.arrayBuffer()));
+  const odtXml = strFromU8(odtArchive["content.xml"]);
+  assert.deepEqual(Array.from(odtXml.matchAll(/text:start-value="(-?\d+)"/g), (match) => match[1]), ["4", "12", "7"]);
+  assert.match(odtXml, /<text:list text:style-name="PoemNumberedList" text:start-value="12"><text:list-item><text:p>Twelfth<\/text:p>/);
 });
