@@ -9,7 +9,7 @@ import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type Sc
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile,
-  serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
+  isSavedPoemSource, serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
@@ -41,6 +41,10 @@ const initialSettings = { proof: true, scansion: false, forms: false, dark: fals
 
 function readStorage<T>(key: string, fallback: T): T {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
+}
+function readSavedPoemSource() {
+  const source = readStorage<unknown>('poetry-studio-source', null);
+  return isSavedPoemSource(source) ? source : null;
 }
 function cleanText(html: string) {
   const node = document.createElement('div');
@@ -89,12 +93,12 @@ function findGrammar(text: string) {
 }
 
 function App() {
+  const [openedSource, setOpenedSource] = useState(readSavedPoemSource);
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileHandleRef = useRef<WritablePoemFileHandle | null>(null);
-  const fileFormatRef = useRef<WritablePoemFileFormat | null>(null);
   const savedHtml = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
@@ -113,9 +117,8 @@ function App() {
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [modal, setModal] = useState<'export' | 'settings' | null>(null);
   const [toast, setToast] = useState('');
-  const [savedAt, setSavedAt] = useState('All changes saved');
+  const [savedAt, setSavedAt] = useState(() => openedSource ? 'Draft restored · updated copy available' : 'All changes saved');
   const [dirty, setDirty] = useState(false);
-  const [openedFileName, setOpenedFileName] = useState('');
   const [isDark, setIsDark] = useState(settings.dark);
   const [tabStops, setTabStops] = useState(settings.tab);
   const [fontSize, setFontSize] = useState(settings.fontSize);
@@ -315,14 +318,16 @@ function App() {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
     fileHandleRef.current = writableFormat ? handle : null;
-    fileFormatRef.current = writableFormat;
-    setOpenedFileName(poem.fileName);
+    const source = writableFormat ? { fileName: poem.fileName, format: writableFormat } : null;
+    setOpenedSource(source);
     setTitle(poem.title);
     setHtml(nextHtml);
     savedHtml.current = nextHtml;
     if (editorRef.current) editorRef.current.innerHTML = nextHtml;
     localStorage.setItem('poetry-studio-title', JSON.stringify(poem.title));
     localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
+    if (source) localStorage.setItem('poetry-studio-source', JSON.stringify(source));
+    else localStorage.removeItem('poetry-studio-source');
     setDirty(false);
     const isOfficeDocument = poem.format === 'rtf' || poem.format === 'docx' || poem.format === 'odt';
     const keepsBasicStyling = poem.format === 'docx' || poem.format === 'odt';
@@ -370,7 +375,7 @@ function App() {
     const currentHtml = editorRef.current?.innerHTML || html;
     const currentText = cleanText(currentHtml);
     const handle = fileHandleRef.current;
-    const format = fileFormatRef.current;
+    const format = openedSource?.format ?? null;
     const content = format ? serializePoem(currentTitle, currentText, format, currentHtml) : null;
     if (handle && format) {
       try {
@@ -389,7 +394,7 @@ function App() {
         }
       } catch (error) {
         if (content) {
-          downloadPoemFile(openedFileName || handle.name, content, format);
+          downloadPoemFile(openedSource?.fileName || handle.name, content, format);
           const editorUnchanged = editorRef.current?.innerHTML === currentHtml;
           const titleUnchanged = titleRef.current?.value === currentTitle;
           if (editorUnchanged && titleUnchanged) persistNow(currentHtml);
@@ -403,8 +408,8 @@ function App() {
       }
       return;
     }
-    if (openedFileName && format) {
-      downloadPoemFile(openedFileName, content!, format);
+    if (openedSource && format) {
+      downloadPoemFile(openedSource.fileName, content!, format);
       persistNow(currentHtml);
       setToast(format === 'rtf' || format === 'docx' || format === 'odt'
         ? 'Updated copy downloaded; unsupported formatting was not retained'
@@ -413,7 +418,7 @@ function App() {
     }
     persistNow(currentHtml);
     setToast('Draft saved in this browser');
-  }, [html, openedFileName, persistNow, title]);
+  }, [html, openedSource, persistNow, title]);
 
   const onEditorInput = useCallback(() => {
     const next = editorRef.current?.innerHTML || '';
@@ -507,7 +512,7 @@ function App() {
           <div className="top-actions">
             <div className="save-state" data-testid="status-save"><span className="save-dot" style={{ background: dirty ? '#c49b64' : undefined }}/>{savedAt}</div>
             <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.html,.htm,.rtf,.docx,.odt,text/plain,text/markdown,text/html,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text" hidden onChange={onFallbackFileChange} data-testid="input-open-poem"/>
-            <button className="button" onClick={openPoem} title={openedFileName ? `Currently open: ${openedFileName}` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
+            <button className="button" onClick={openPoem} title={openedSource ? fileHandleRef.current ? `Currently open: ${openedSource.fileName}` : `Saved source: ${openedSource.fileName}; reopen it to save directly` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
             <button className="button ghost" aria-label="Toggle theme" title="Toggle theme" onClick={() => setIsDark((old) => !old)} data-testid="toggle-theme">{isDark ? <Sun/> : <Moon/>}</button>
             <button className="button" onClick={() => setModal('settings')} data-testid="button-settings"><Settings2/><span>Settings</span></button>
             <button className="button primary" onClick={() => setModal('export')} data-testid="button-export"><Download/><span>Export</span></button>
@@ -583,7 +588,7 @@ function App() {
             <footer className="editor-footer">
               <div className="count-set"><span><b>{wordCount}</b> words</span><span><b>{lineCount}</b> lines</span></div>
               <span>{settings.scansion ? 'Marks above lines · click to edit' : 'Line breaks preserved'} · local draft</span>
-              <button className="button small" onClick={() => void savePoem()} data-testid="button-save"><Save/>{openedFileName && !fileHandleRef.current ? 'Download updated copy' : 'Save now'}</button>
+              <button className="button small" onClick={() => void savePoem()} data-testid="button-save"><Save/>{openedSource && !fileHandleRef.current ? 'Download updated copy' : 'Save now'}</button>
             </footer>
           </section>
           <aside className="right-panel">

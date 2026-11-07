@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  choosePoemFile, downloadPoemFile, readPoemFile, serializePoem, writePoemFile,
+  choosePoemFile, downloadPoemFile, isSavedPoemSource, readPoemFile, serializePoem, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
 import { readRtf } from "./document-import";
@@ -44,6 +44,13 @@ function poemCounts(text: string) {
     words: text.match(/\b[\w’'-]+\b/g)?.length || 0,
   };
 }
+
+test("validates saved filename and format metadata before restoring it", () => {
+  assert.equal(isSavedPoemSource({ fileName: "night-poem.docx", format: "docx" }), true);
+  assert.equal(isSavedPoemSource({ fileName: "   ", format: "docx" }), false);
+  assert.equal(isSavedPoemSource({ fileName: "night-poem.docx", format: "exe" }), false);
+  assert.equal(isSavedPoemSource(null), false);
+});
 
 test("imports DOCX emphasis and paragraph layout without changing poem structure", async () => {
   enableXmlDom();

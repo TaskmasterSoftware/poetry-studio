@@ -24,6 +24,11 @@ export interface OpenedPoemFile {
   format: PoemFileFormat;
 }
 
+export interface SavedPoemSource {
+  fileName: string;
+  format: WritablePoemFileFormat;
+}
+
 const supportedFormats: Record<string, PoemFileFormat> = {
   txt: 'txt',
   md: 'md',
@@ -79,6 +84,15 @@ function fileFormat(fileName: string): PoemFileFormat {
 
 export function isWritablePoemFileFormat(format: PoemFileFormat): format is WritablePoemFileFormat {
   return ['txt', 'md', 'html', 'rtf', 'docx', 'odt'].includes(format);
+}
+
+export function isSavedPoemSource(value: unknown): value is SavedPoemSource {
+  if (!value || typeof value !== 'object') return false;
+  const source = value as Partial<SavedPoemSource>;
+  return typeof source.fileName === 'string'
+    && source.fileName.trim().length > 0
+    && typeof source.format === 'string'
+    && isWritablePoemFileFormat(source.format as PoemFileFormat);
 }
 
 function textFromHtmlNode(node: Node): string {
