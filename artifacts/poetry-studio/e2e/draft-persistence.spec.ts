@@ -67,6 +67,44 @@ test('keeps each draft and imported source paired through switching and reload',
   await expect(page.getByTestId('button-open-poem')).toHaveAttribute('title', new RegExp(importedFileName));
 });
 
+test('compares two saved versions without changing the active draft', async ({ page }) => {
+  await page.goto('/');
+
+  await page.locator(titleInput).fill('First title');
+  await page.locator(editor).fill('First opening line\nA shared ending');
+  await page.getByTestId('button-version-history').click();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.locator(titleInput).fill('Second title');
+  await page.locator(editor).fill('Revised opening line\nA shared ending');
+  await page.getByTestId('button-version-history').click();
+
+  await expect(page.getByTestId('select-version-compare-1')).toBeVisible();
+  await expect(page.getByTestId('select-version-compare-2')).toBeVisible();
+  const firstTitleVersionId = await page.getByTestId('select-version-compare-2').locator('option').nth(2).getAttribute('value');
+  await page.getByTestId('select-version-compare-2').selectOption(firstTitleVersionId!);
+  await expect(page.getByTestId('version-comparison-summary')).toHaveText('Titles differ · Manuscripts differ');
+  await expect(page.getByTestId('version-comparison-manuscript-1').locator('.changed')).toContainText('Revised opening line');
+  await expect(page.locator(titleInput)).toHaveValue('Second title');
+  await expect(page.locator(editor)).toContainText('Revised opening line');
+
+  const draftWhileComparing = await page.evaluate(() => {
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      id: string;
+      title: string;
+      editorHtml: string;
+    }>;
+    const activeId = JSON.parse(localStorage.getItem('poetry-studio-active-draft') || '""') as string;
+    return drafts.find((draft) => draft.id === activeId);
+  });
+  expect(draftWhileComparing?.title).toBe('Second title');
+  expect(draftWhileComparing?.editorHtml).toContain('Revised opening line');
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator(titleInput)).toHaveValue('Second title');
+  await expect(page.locator(editor)).toContainText('Revised opening line');
+});
+
 test('confirms draft removal, switches safely, and keeps remaining drafts after reload', async ({ page }) => {
   await page.goto('/');
   await page.locator(titleInput).fill('Keep this poem');

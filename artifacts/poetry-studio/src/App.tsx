@@ -178,6 +178,7 @@ function App() {
   const [activeDraftId, setActiveDraftId] = useState(initialLibraryStore.activeDraftId);
   const [revisionHistory, setRevisionHistory] = useState(() => readPoemRevisions(initialLibraryStore.activeDraftId));
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
+  const [comparisonRevisionIds, setComparisonRevisionIds] = useState<[string, string]>(['', '']);
   const [openedSource, setOpenedSource] = useState(() => initialLibraryStore.drafts.find((draft) => draft.id === initialLibraryStore.activeDraftId)?.source ?? null);
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
@@ -500,6 +501,7 @@ function App() {
     const history = readPoemRevisions(activeDraftId);
     setRevisionHistory(history);
     setSelectedRevisionId(history[0]?.id ?? '');
+    setComparisonRevisionIds([history[0]?.id ?? '', history[1]?.id ?? '']);
     setModal('history');
   }, [activeDraftId, persistNow]);
 
@@ -957,6 +959,13 @@ function App() {
     <button className={`tool ${selected ? 'selected' : ''}`} title={label} aria-label={label} data-testid={`tool-${label.toLowerCase().replace(/\s+/g, '-')}`} onMouseDown={(event) => event.preventDefault()} onClick={action}>{icon}</button>
   );
   const selectedRevision = revisionHistory.find((revision) => revision.id === selectedRevisionId) ?? revisionHistory[0];
+  const comparisonRevisions = comparisonRevisionIds.map((id) => revisionHistory.find((revision) => revision.id === id) ?? null);
+  const comparisonTexts = comparisonRevisions.map((revision) => revision ? cleanText(revision.editorHtml) : '');
+  const comparisonLines = comparisonTexts.map((text) => text.split('\n'));
+  const comparisonTitlesMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
+    && comparisonRevisions[0].title === comparisonRevisions[1].title);
+  const comparisonManuscriptsMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
+    && comparisonTexts[0] === comparisonTexts[1]);
 
   return (
     <div className={`studio ${isDark ? 'dark' : ''}`}>
@@ -1139,7 +1148,7 @@ function App() {
         </div>
       </main>
       {modal && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
-        <div className="dialog" role={modal === 'remove-draft' ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="dialog-title">
+          <div className={`dialog ${modal === 'history' ? 'history-dialog' : ''}`} role={modal === 'remove-draft' ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="dialog-title">
           <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : modal === 'remove-draft' ? 'Remove this poem?' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : modal === 'remove-draft' ? 'This removes the browser draft and its saved versions from this device.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
           {modal === 'remove-draft' ? <><div className="panel-card"><p style={{ margin: 0 }}>Remove <strong>{drafts.find((draft) => draft.id === draftToRemoveId)?.title || 'Untitled poem'}</strong>? This cannot be undone.</p></div><div className="dialog-foot"><button className="button" onClick={() => { setDraftToRemoveId(''); setModal(null); }} data-testid="button-cancel-remove-draft">Keep poem</button><button className="button primary" onClick={removeDraft} data-testid="button-confirm-remove-draft"><Trash2/>Remove poem</button></div></> :
           modal === 'book-export' ? <><div className="panel-card">
@@ -1157,11 +1166,59 @@ function App() {
                   data-testid={`button-version-${revision.id}`}
                 ><strong>{revision.title || 'Untitled poem'}</strong><span>{new Date(revision.createdAt).toLocaleString()}</span></button>) : <div className="empty-hint">No saved versions yet.</div>}
               </div>
-              {selectedRevision && <section className="history-preview" aria-label="Version preview">
-                <div className="field-label">Preview · {new Date(selectedRevision.createdAt).toLocaleString()}</div>
-                <h3>{selectedRevision.title || 'Untitled poem'}</h3>
-                <pre>{cleanText(selectedRevision.editorHtml) || 'This version has no manuscript text.'}</pre>
-              </section>}
+              <div className="history-details">
+                <section className="history-comparison" aria-label="Compare saved versions">
+                  <div className="field-label">Compare two versions</div>
+                  {revisionHistory.length > 1 ? <>
+                    <div className="history-compare-selects">
+                      {[0, 1].map((slot) => <label className="history-compare-select" key={slot}>
+                        <span className="field-label">Version {slot + 1}</span>
+                        <select
+                          className="text-field"
+                          value={comparisonRevisionIds[slot]}
+                          onChange={(event) => setComparisonRevisionIds((previous) => {
+                            const next: [string, string] = [...previous];
+                            next[slot] = event.target.value;
+                            return next;
+                          })}
+                          aria-label={`Compare version ${slot + 1}`}
+                          data-testid={`select-version-compare-${slot + 1}`}
+                        >
+                          {revisionHistory.map((revision) => <option
+                            key={revision.id}
+                            value={revision.id}
+                            disabled={revision.id === comparisonRevisionIds[1 - slot]}
+                          >{revision.title || 'Untitled poem'} · {new Date(revision.createdAt).toLocaleString()}</option>)}
+                        </select>
+                      </label>)}
+                    </div>
+                    {comparisonRevisions[0] && comparisonRevisions[1] ? <>
+                      <p className="history-diff-summary" role="status" data-testid="version-comparison-summary">
+                        {comparisonTitlesMatch ? 'Titles match' : 'Titles differ'} · {comparisonManuscriptsMatch ? 'Manuscripts match' : 'Manuscripts differ'}
+                      </p>
+                      <div className="history-compare-panes">
+                        {comparisonRevisions.map((revision, slot) => <section className="history-compare-pane" key={revision!.id} aria-label={`Version ${slot + 1} comparison`}>
+                          <div className="field-label">Version {slot + 1} · {new Date(revision!.createdAt).toLocaleString()}</div>
+                          <h3 className={!comparisonTitlesMatch ? 'changed' : ''}>{revision!.title || 'Untitled poem'}</h3>
+                          <div className="history-manuscript-label field-label">Manuscript</div>
+                          <pre className="history-diff-lines" data-testid={`version-comparison-manuscript-${slot + 1}`}>
+                            {comparisonLines[slot].map((line, lineIndex) => <span
+                              className={`history-diff-line ${line !== comparisonLines[1 - slot][lineIndex] ? 'changed' : ''}`}
+                              key={lineIndex}
+                            ><span className="history-line-number">{lineIndex + 1}</span><span>{line || '\u00a0'}</span></span>)}
+                            {!comparisonTexts[slot] && <span className="history-empty">This version has no manuscript text.</span>}
+                          </pre>
+                        </section>)}
+                      </div>
+                    </> : <div className="empty-hint">Choose two different saved versions to compare.</div>}
+                  </> : <div className="empty-hint">Save at least two versions to compare their titles and manuscripts.</div>}
+                </section>
+                {selectedRevision && <section className="history-preview" aria-label="Selected version preview">
+                  <div className="field-label">Selected for restore · {new Date(selectedRevision.createdAt).toLocaleString()}</div>
+                  <h3>{selectedRevision.title || 'Untitled poem'}</h3>
+                  <pre>{cleanText(selectedRevision.editorHtml) || 'This version has no manuscript text.'}</pre>
+                </section>}
+              </div>
             </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Cancel</button><button className="button primary" disabled={!selectedRevision} onClick={restoreRevision} data-testid="button-restore-version"><History/>Restore this version</button></div></> :
           modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>Choose a paper size and margins for a fixed-layout copy.</p>{renderPdfExportOptions()}<button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
             <><div className="form-grid">
