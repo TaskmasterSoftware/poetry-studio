@@ -1,0 +1,1 @@
+- [Per-user cloud storage](per-user-cloud-storage.md) — each app user must authorize their own provider account; do not use the workspace owner's shared connection.
