@@ -838,7 +838,7 @@ function App() {
     });
   };
   const exportPoem = (kind: WritablePoemFileFormat | 'pdf') => {
-    const content = kind === 'pdf' ? serializePoemPdf(title, text) : serializePoem(title, text, kind, html);
+    const content = kind === 'pdf' ? serializePoemPdf(title, text, html) : serializePoem(title, text, kind, html);
     const fileName = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'poem'}.${kind}`;
     downloadPoemFile(fileName, content, kind);
     setModal(null); setToast(`Poem exported as ${kind.toUpperCase()}`);

@@ -42,7 +42,7 @@ function rtfText(value: string) {
   }).join("");
 }
 
-type ExportInlineStyle = {
+export type ExportInlineStyle = {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -50,8 +50,8 @@ type ExportInlineStyle = {
   superscript?: boolean;
   subscript?: boolean;
 };
-type ExportRun = { text: string; style: ExportInlineStyle };
-type ExportParagraph = {
+export type ExportRun = { text: string; style: ExportInlineStyle };
+export type ExportParagraph = {
   runs: ExportRun[];
   align?: "left" | "center" | "right" | "justify";
   left?: string;
@@ -256,6 +256,10 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
   return text.replace(/\r\n?/g, "\n").split("\n").map((line) => ({
     runs: line ? [{ text: line, style: {} }] : [],
   }));
+}
+
+export function getEditorParagraphs(source: string | undefined, text: string) {
+  return editorParagraphs(source, text);
 }
 
 function runsPlainText(runs: ExportRun[]) {

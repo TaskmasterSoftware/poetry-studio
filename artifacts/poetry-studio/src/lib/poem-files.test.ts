@@ -309,7 +309,10 @@ test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and
   assert.match(source, /<5365636F6E64206C696E65>/);
   assert.match(source, /<4C617374206C696E65>/);
   assert.match(source, /\/Count 1/);
+  assert.match(source, /\/Kids \[7 0 R\]/);
   assert.match(source, /\/WinAnsiEncoding/);
+  assert.match(source, /BT \/F1 11 Tf/);
+  assert.doesNotMatch(source, /BT \/F3 11 Tf|BT \/F4 11 Tf|0\.6 w/);
 
   const xrefStart = Number(source.match(/startxref\n(\d+)/)?.[1]);
   assert.equal(source.slice(xrefStart, xrefStart + 5), "xref\n");
@@ -322,6 +325,20 @@ test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and
 
   const multipagePdf = await serializePoemPdf("Long poem", Array.from({ length: 120 }, (_, index) => `Line ${index + 1}`).join("\n")).text();
   assert.match(multipagePdf, /\/Count [2-9]\d*/);
+});
+
+test("exports PDF emphasis and paragraph alignment while keeping plain text styling unchanged", async () => {
+  enableXmlDom();
+  const editorHtml = '<p style="text-align:center"><strong>Bold</strong> <em>Italic</em> <u>Under</u></p><p style="text-align:right">Right</p>';
+  const pdf = await serializePoemPdf("Styled poem", "Bold Italic Under\nRight", editorHtml).text();
+
+  assert.match(pdf, /\/F3 5 0 R/);
+  assert.match(pdf, /\/F4 6 0 R/);
+  assert.match(pdf, /BT \/F2 11 Tf/);
+  assert.match(pdf, /BT \/F3 11 Tf/);
+  assert.match(pdf, /0\.6 w [\d.]+ [\d.]+ m [\d.]+ [\d.]+ l S/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 512\.5 668 Td/);
+  assert.doesNotMatch(pdf, /BT \/F1 11 Tf 0 Tw 72 668 Td/);
 });
 
 test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => {

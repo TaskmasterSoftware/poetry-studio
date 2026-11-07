@@ -1,5 +1,6 @@
 import {
-  readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
+  getEditorParagraphs, readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
+  type ExportInlineStyle, type ExportRun,
 } from './document-import';
 
 export type WritablePoemFileFormat = 'txt' | 'md' | 'html' | 'rtf' | 'docx' | 'odt';
@@ -290,15 +291,17 @@ function wrapPdfLine(value: string, maxCharacters: number) {
 function assemblePdf(title: string, pages: string[][]) {
   const objects: string[] = [];
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
-  objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${5 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
+  objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${7 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
   objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
   objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+  objects[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>';
+  objects[6] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-BoldOblique /Encoding /WinAnsiEncoding >>';
 
   pages.forEach((commands, index) => {
-    const pageNumber = 5 + index * 2;
+    const pageNumber = 7 + index * 2;
     const contentNumber = pageNumber + 1;
     const stream = `${commands.join('\n')}\n`;
-    objects[pageNumber] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentNumber} 0 R >>`;
+    objects[pageNumber] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents ${contentNumber} 0 R >>`;
     objects[contentNumber] = `<< /Length ${stream.length} >>\nstream\n${stream}endstream`;
   });
 
@@ -319,7 +322,94 @@ function assemblePdf(title: string, pages: string[][]) {
   return pdf;
 }
 
-function buildPdf(title: string, text: string) {
+type PdfCharacter = { value: string; style: ExportInlineStyle };
+
+function mergePdfCharacters(characters: PdfCharacter[]): ExportRun[] {
+  const runs: ExportRun[] = [];
+  for (const character of characters) {
+    const previous = runs[runs.length - 1];
+    if (previous && JSON.stringify(previous.style) === JSON.stringify(character.style)) {
+      previous.text += character.value;
+    } else {
+      runs.push({ text: character.value, style: character.style });
+    }
+  }
+  return runs;
+}
+
+function wrapPdfRuns(runs: ExportRun[], maxCharacters: number) {
+  let remaining = runs.flatMap((run) =>
+    Array.from(run.text, (value) => ({ value, style: run.style })),
+  );
+  const wrapped: ExportRun[][] = [];
+  while (remaining.length > maxCharacters) {
+    let splitAt = remaining.slice(0, maxCharacters + 1).findLastIndex((character) => character.value === ' ');
+    if (splitAt < 1) splitAt = maxCharacters;
+    const line = remaining.slice(0, splitAt);
+    while (line[line.length - 1]?.value === ' ') line.pop();
+    wrapped.push(mergePdfCharacters(line));
+    remaining = remaining.slice(splitAt);
+    while (remaining[0]?.value === ' ') remaining.shift();
+  }
+  wrapped.push(mergePdfCharacters(remaining));
+  return wrapped;
+}
+
+function splitPdfParagraphLines(runs: ExportRun[]) {
+  const lines: ExportRun[][] = [[]];
+  for (const run of runs) {
+    const pieces = run.text.split('\n');
+    pieces.forEach((piece, index) => {
+      if (piece) lines[lines.length - 1].push({ text: piece, style: run.style });
+      if (index < pieces.length - 1) lines.push([]);
+    });
+  }
+  return lines;
+}
+
+function pdfFont(style: ExportInlineStyle): 'F1' | 'F2' | 'F3' | 'F4' {
+  if (style.bold && style.italic) return 'F4';
+  if (style.bold) return 'F2';
+  if (style.italic) return 'F3';
+  return 'F1';
+}
+
+function approximatePdfTextWidth(value: string, size: number) {
+  return Array.from(value).length * size * 0.5;
+}
+
+function appendStyledPdfLine(
+  commands: string[],
+  runs: ExportRun[],
+  y: number,
+  align: 'left' | 'center' | 'right' | 'justify' | undefined,
+  justify: boolean,
+) {
+  const totalText = runs.map((run) => run.text).join('');
+  const lineWidth = approximatePdfTextWidth(totalText, 11);
+  const availableWidth = 468;
+  const wordSpaces = (totalText.match(/ /g) || []).length;
+  const wordSpacing = justify && wordSpaces > 0
+    ? Math.max(0, (availableWidth - lineWidth) / wordSpaces)
+    : 0;
+  let x = align === 'center'
+    ? 306 - lineWidth / 2
+    : align === 'right'
+      ? 540 - lineWidth
+      : 72;
+
+  for (const run of runs) {
+    const font = pdfFont(run.style);
+    const runWidth = approximatePdfTextWidth(run.text, 11) + (run.text.match(/ /g) || []).length * wordSpacing;
+    commands.push(`BT /${font} 11 Tf ${wordSpacing} Tw ${x} ${y} Td <${winAnsiHex(run.text)}> Tj 0 Tw ET`);
+    if (run.style.underline && runWidth > 0) {
+      commands.push(`0.6 w ${x} ${y - 2} m ${x + runWidth} ${y - 2} l S`);
+    }
+    x += runWidth;
+  }
+}
+
+function buildPdf(title: string, text: string, editorHtml?: string) {
   const pages: string[][] = [[]];
   let y = 720;
   const addPage = () => {
@@ -337,15 +427,26 @@ function buildPdf(title: string, text: string) {
   }
   y -= 12;
 
-  for (const sourceLine of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (!sourceLine) {
+  const paragraphs = getEditorParagraphs(editorHtml, text);
+  for (const paragraph of paragraphs) {
+    const paragraphLines = splitPdfParagraphLines(paragraph.runs);
+    if (paragraphLines.every((line) => !line.length)) {
       y -= 12;
       continue;
     }
-    for (const line of wrapPdfLine(sourceLine, 88)) {
-      if (y < 72) addPage();
-      addText(line, 'F1', 11);
-      y -= 15;
+    for (const paragraphLine of paragraphLines) {
+      const wrappedLines = wrapPdfRuns(paragraphLine, 88);
+      for (const [wrappedLineIndex, lineRuns] of wrappedLines.entries()) {
+        if (y < 72) addPage();
+        appendStyledPdfLine(
+          pages[pages.length - 1],
+          lineRuns,
+          y,
+          paragraph.align,
+          paragraph.align === 'justify' && wrappedLineIndex < wrappedLines.length - 1,
+        );
+        y -= 15;
+      }
     }
   }
 
@@ -393,8 +494,8 @@ function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[
   return assemblePdf(bookTitle, pages);
 }
 
-export function serializePoemPdf(title: string, text: string) {
-  return new Blob([buildPdf(title, text)], { type: 'application/pdf' });
+export function serializePoemPdf(title: string, text: string, editorHtml?: string) {
+  return new Blob([buildPdf(title, text, editorHtml)], { type: 'application/pdf' });
 }
 
 export function serializeBookPdf(bookTitle: string, poems: { title: string; text: string }[]) {
