@@ -67,6 +67,122 @@ test('keeps each draft and imported source paired through switching and reload',
   await expect(page.getByTestId('button-open-poem')).toHaveAttribute('title', new RegExp(importedFileName));
 });
 
+test('keeps imported book poems paired with their titles through switching and reload', async ({ page }) => {
+  await page.goto('/');
+
+  const bookTitle = 'Tide marks';
+  const poems = [
+    {
+      title: 'The glass buoy',
+      lines: ['A green bell below the foam', 'Rings once against the morning'],
+    },
+    {
+      title: 'Low-tide map',
+      lines: ['The shore redraws its silver edge', 'A path appears, then disappears'],
+    },
+  ];
+  const bundle = {
+    format: 'poetry-studio-book',
+    version: 1,
+    book: { title: bookTitle },
+    poems: poems.map((poem) => ({
+      title: poem.title,
+      editorHtml: poem.lines.map((line) => `<p>${line}</p>`).join(''),
+      source: null,
+    })),
+  };
+
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByTestId('button-import-book').click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
+    name: 'tide-marks.poetrybook',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(bundle)),
+  });
+
+  await expectDraft(page, poems[0].title, poems[0].lines);
+  const storedBook = await page.evaluate((title) => {
+    const books = JSON.parse(localStorage.getItem('poetry-studio-books') || '[]') as Array<{
+      id: string;
+      title: string;
+    }>;
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      id: string;
+      title: string;
+      editorHtml: string;
+      bookId?: string;
+    }>;
+    const book = books.find((item) => item.title === title);
+    if (!book) return null;
+    return {
+      id: book.id,
+      title: book.title,
+      poems: drafts
+        .filter((draft) => draft.bookId === book.id)
+        .map(({ id, title: poemTitle, editorHtml, bookId }) => ({ id, title: poemTitle, editorHtml, bookId })),
+    };
+  }, bookTitle);
+
+  expect(storedBook).not.toBeNull();
+  expect(storedBook?.poems).toHaveLength(2);
+  expect(storedBook?.poems.map((poem) => poem.title)).toEqual(poems.map((poem) => poem.title));
+  for (const poem of poems) {
+    const storedPoem = storedBook?.poems.find((item) => item.title === poem.title);
+    expect(storedPoem?.bookId).toBe(storedBook?.id);
+    for (const line of poem.lines) expect(storedPoem?.editorHtml).toContain(line);
+  }
+
+  const bookShelf = page.getByTestId(`shelf-book-${storedBook!.id}`);
+  await expect(bookShelf).toContainText(bookTitle);
+  await expect(bookShelf.locator('.book-count')).toHaveText('2 poems');
+  for (const poem of poems) {
+    const storedPoem = storedBook!.poems.find((item) => item.title === poem.title)!;
+    await expect(bookShelf.getByTestId(`shelf-poem-${storedPoem.id}`)).toContainText(poem.title);
+  }
+
+  const secondPoem = storedBook!.poems.find((poem) => poem.title === poems[1].title)!;
+  await bookShelf.getByTestId(`button-select-poem-${secondPoem.id}`).click();
+  await expectDraft(page, poems[1].title, poems[1].lines);
+  const firstPoem = storedBook!.poems.find((poem) => poem.title === poems[0].title)!;
+  await bookShelf.getByTestId(`button-select-poem-${firstPoem.id}`).click();
+  await expectDraft(page, poems[0].title, poems[0].lines);
+
+  await page.reload();
+  await expectDraft(page, poems[0].title, poems[0].lines);
+  const reopenedBook = await page.evaluate((title) => {
+    const books = JSON.parse(localStorage.getItem('poetry-studio-books') || '[]') as Array<{
+      id: string;
+      title: string;
+    }>;
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      id: string;
+      title: string;
+      editorHtml: string;
+      bookId?: string;
+    }>;
+    const book = books.find((item) => item.title === title);
+    if (!book) return null;
+    return {
+      id: book.id,
+      poems: drafts
+        .filter((draft) => draft.bookId === book.id)
+        .map(({ id, title: poemTitle }) => ({ id, title: poemTitle })),
+    };
+  }, bookTitle);
+
+  expect(reopenedBook?.id).toBe(storedBook!.id);
+  expect(reopenedBook?.poems).toHaveLength(2);
+  expect(reopenedBook?.poems.map((poem) => poem.title)).toEqual(poems.map((poem) => poem.title));
+  const reopenedShelf = page.getByTestId(`shelf-book-${storedBook!.id}`);
+  await expect(reopenedShelf.locator('.book-count')).toHaveText('2 poems');
+  for (const poem of poems) {
+    const reopenedPoem = reopenedBook!.poems.find((item) => item.title === poem.title)!;
+    await reopenedShelf.getByTestId(`button-select-poem-${reopenedPoem.id}`).click();
+    await expectDraft(page, poem.title, poem.lines);
+  }
+});
+
 test('merges edits to different poems made in two open tabs', async ({ page }) => {
   await page.goto('/');
   await page.locator(titleInput).fill('First poem');
