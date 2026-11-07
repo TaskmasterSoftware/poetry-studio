@@ -176,6 +176,33 @@ test("imports ODT emphasis and styled paragraphs while keeping stanzas and line 
   assert.match(poem.editorHtml || "", /<p><br><\/p>/);
 });
 
+test("imports RTF emphasis, paragraph alignment, line breaks, and blank stanzas", async () => {
+  const source = String.raw`{\rtf1\ansi{\info{\title Night}}\b Night\b0\par{\qc The {\b bold} and {\i italic} {\ul under} {\strike struck}\line second line}\par\pard\par{\qr Right}\par}`;
+  const poem = await readPoemFile(new File([source], "night.rtf"));
+
+  assert.equal(poem.title, "Night");
+  assert.equal(poem.text, "The bold and italic under struck\nsecond line\n\nRight");
+  assert.match(poem.editorHtml || "", /<p style="text-align:center">/);
+  assert.match(poem.editorHtml || "", /<strong>bold<\/strong>/);
+  assert.match(poem.editorHtml || "", /<em>italic<\/em>/);
+  assert.match(poem.editorHtml || "", /<u>under<\/u>/);
+  assert.match(poem.editorHtml || "", /<s>struck<\/s>/);
+  assert.match(poem.editorHtml || "", /<br>second line/);
+  assert.match(poem.editorHtml || "", /<p><br><\/p>/);
+  assert.match(poem.editorHtml || "", /<p style="text-align:right">Right<\/p>/);
+});
+
+test("keeps plain RTF title, line breaks, and stanza spacing compatible", async () => {
+  const source = String.raw`{\rtf1\ansi{\info{\title Plain}}\b Plain\b0\par First line\par\par Second line\line continued\par}`;
+  const poem = await readPoemFile(new File([source], "plain.rtf"));
+
+  assert.equal(poem.title, "Plain");
+  assert.equal(poem.text, "First line\n\nSecond line\ncontinued");
+  assert.match(poem.editorHtml || "", /<p>First line<\/p>/);
+  assert.match(poem.editorHtml || "", /<p><br><\/p>/);
+  assert.match(poem.editorHtml || "", /<p>Second line<br>continued<\/p>/);
+});
+
 test("uses the browser file picker and writes a valid DOCX Blob", async () => {
   let pickerOptions: unknown;
   const writes: (Blob | string)[] = [];
@@ -266,7 +293,10 @@ test("serializes RTF with escaped structural characters and unicode", async () =
   assert.ok(text.includes("A \\\\ line"));
   assert.ok(text.includes("\\u8212?"));
   assert.ok(text.includes("\\u-10180?\\u-8409?"));
-  assert.deepEqual(readRtf(text), { title: "Poem {title}", text: "A \\ line — 🌧" });
+  const imported = readRtf(text);
+  assert.equal(imported.title, "Poem {title}");
+  assert.equal(imported.text, "A \\ line — 🌧");
+  assert.ok(imported.editorHtml.includes("A \\ line — 🌧"));
 });
 
 test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and readable punctuation", async () => {
@@ -322,7 +352,10 @@ test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => 
   assert.match(rtfText, /\\fi180/);
   assert.match(rtfText, /\\b First/);
   assert.match(rtfText, /\\i\\ul bright/);
-  assert.deepEqual(readRtf(rtfText), { title, text });
+  const importedRtf = readRtf(rtfText);
+  assert.equal(importedRtf.title, title);
+  assert.equal(importedRtf.text, text);
+  assert.match(importedRtf.editorHtml, /<strong>First<\/strong>/);
 
   const odt = serializePoem(title, text, "odt", editorHtml) as Blob;
   const odtArchive = unzipSync(new Uint8Array(await odt.arrayBuffer()));

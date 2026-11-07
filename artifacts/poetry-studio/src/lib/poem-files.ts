@@ -204,6 +204,7 @@ export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
     const source = await file.text();
     if (format === 'rtf') {
       extracted = readRtf(source);
+      editorHtml = extracted.editorHtml;
     } else if (format === 'html') {
       const htmlContent = htmlToEditorContent(source);
       extracted = htmlContent;

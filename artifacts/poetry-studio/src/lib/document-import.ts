@@ -795,7 +795,23 @@ function decodeRtfByte(hex: string): string {
   }
 }
 
-export function readRtf(source: string): { title: string; text: string } {
+type RtfGroupState = {
+  skip: boolean;
+  unicodeFallback: number;
+  style: InlineStyle;
+  align?: "left" | "center" | "right" | "justify";
+};
+
+function rtfInlineHtml(text: string) {
+  return text.split(/(\n)/).map((part) => part === "\n" ? "<br>" : escapeXml(part)).join("");
+}
+
+function rtfParagraphHtml(paragraph: ImportedContent & { align?: RtfGroupState["align"] }) {
+  const style = paragraph.align ? ` style="text-align:${paragraph.align}"` : "";
+  return `<p${style}>${paragraph.html || "<br>"}</p>`;
+}
+
+export function readRtf(source: string): { title: string; text: string; editorHtml: string } {
   const rawTitle = source.match(/\\title\b((?:\\.|[^{}])*)/i)?.[1] || "";
   const title = rawTitle
     .replace(/\\'([\da-f]{2})/gi, (_match, hex: string) => decodeRtfByte(hex))
@@ -808,16 +824,44 @@ export function readRtf(source: string): { title: string; text: string } {
     .replace(/\\_/g, "\u2011")
     .replace(/\\[a-zA-Z]+-?\d* ?/g, "")
     .trim();
-  const groups: { skip: boolean; unicodeFallback: number }[] = [{ skip: false, unicodeFallback: 1 }];
-  const output: string[] = [];
+  const groups: RtfGroupState[] = [{
+    skip: false,
+    unicodeFallback: 1,
+    style: {},
+  }];
+  const paragraphs: (ImportedContent & { align?: RtfGroupState["align"] })[] = [];
+  let runs: { text: string; style: InlineStyle }[] = [];
+  let paragraphAlign: RtfGroupState["align"];
   let fallbackCharacters = 0;
+
+  const append = (text: string, state: RtfGroupState) => {
+    if (!text) return;
+    const previous = runs[runs.length - 1];
+    if (previous && JSON.stringify(previous.style) === JSON.stringify(state.style)) {
+      previous.text += text;
+    } else {
+      runs.push({ text, style: { ...state.style } });
+    }
+  };
+  const finishParagraph = (state: RtfGroupState) => {
+    const text = runs.map((run) => run.text).join("");
+    const html = runs.map((run) => wrappedInlineHtml(rtfInlineHtml(run.text), run.style)).join("");
+    const paragraph = {
+      text,
+      html,
+      align: paragraphAlign ?? state.align,
+    };
+    paragraphs.push({ ...paragraph, html: rtfParagraphHtml(paragraph) });
+    runs = [];
+    paragraphAlign = undefined;
+  };
 
   for (let index = 0; index < source.length;) {
     const character = source[index];
     const group = groups[groups.length - 1];
 
     if (character === "{") {
-      groups.push({ ...group });
+      groups.push({ ...group, style: { ...group.style } });
       index += 1;
       continue;
     }
@@ -829,7 +873,7 @@ export function readRtf(source: string): { title: string; text: string } {
     if (character !== "\\") {
       if (!group.skip && character !== "\r" && character !== "\n") {
         if (fallbackCharacters > 0) fallbackCharacters -= 1;
-        else output.push(character);
+        else append(character, group);
       }
       index += 1;
       continue;
@@ -841,7 +885,7 @@ export function readRtf(source: string): { title: string; text: string } {
       const decoded = decodeRtfByte(source.slice(index + 2, index + 4));
       if (!group.skip) {
         if (fallbackCharacters > 0) fallbackCharacters -= 1;
-        else output.push(decoded);
+        else append(decoded, group);
       }
       index += 4;
       continue;
@@ -849,7 +893,7 @@ export function readRtf(source: string): { title: string; text: string } {
     if ("\\{}".includes(next)) {
       if (!group.skip) {
         if (fallbackCharacters > 0) fallbackCharacters -= 1;
-        else output.push(next);
+        else append(next, group);
       }
       index += 2;
       continue;
@@ -862,7 +906,7 @@ export function readRtf(source: string): { title: string; text: string } {
     if (next === "~" || next === "_" || next === "-") {
       if (!group.skip && next !== "-") {
         if (fallbackCharacters > 0) fallbackCharacters -= 1;
-        else output.push(next === "~" ? " " : "\u2011");
+        else append(next === "~" ? " " : "\u2011", group);
       }
       index += 2;
       continue;
@@ -890,31 +934,56 @@ export function readRtf(source: string): { title: string; text: string } {
       group.unicodeFallback = Math.max(0, amount);
     } else if (word === "u" && Number.isFinite(amount)) {
       const codeUnit = amount < 0 ? amount + 65536 : amount;
-      output.push(String.fromCharCode(codeUnit));
+      append(String.fromCharCode(codeUnit), group);
       fallbackCharacters = group.unicodeFallback;
-    } else if (word === "par" || word === "line" || word === "page" || word === "row") {
-      output.push("\n");
+    } else if (word === "par") {
+      finishParagraph(group);
+    } else if (word === "line" || word === "page" || word === "row") {
+      append("\n", group);
     } else if (word === "tab" || word === "cell") {
-      output.push("\t");
+      append("\t", group);
     } else if (word === "emdash") {
-      output.push("\u2014");
+      append("\u2014", group);
     } else if (word === "endash") {
-      output.push("\u2013");
+      append("\u2013", group);
     } else if (word === "bullet") {
-      output.push("\u2022");
+      append("\u2022", group);
     } else if (word === "lquote") {
-      output.push("\u2018");
+      append("\u2018", group);
     } else if (word === "rquote") {
-      output.push("\u2019");
+      append("\u2019", group);
     } else if (word === "ldblquote") {
-      output.push("\u201c");
+      append("\u201c", group);
     } else if (word === "rdblquote") {
-      output.push("\u201d");
+      append("\u201d", group);
     } else if (word === "bin" && Number.isFinite(amount) && amount > 0) {
       index += amount;
+    } else if (["b", "i", "ul", "ulw", "strike"].includes(word)) {
+      const enabled = numericArgument === undefined || amount !== 0;
+      if (word === "b") group.style.bold = enabled;
+      if (word === "i") group.style.italic = enabled;
+      if (word === "ul" || word === "ulw") group.style.underline = enabled;
+      if (word === "strike") group.style.strike = enabled;
+    } else if (word === "ulnone") {
+      group.style.underline = false;
+    } else if (word === "plain") {
+      group.style = {};
+    } else if (["ql", "qc", "qr", "qj"].includes(word)) {
+      group.align = ({ ql: "left", qc: "center", qr: "right", qj: "justify" } as const)[word as "ql" | "qc" | "qr" | "qj"];
+      paragraphAlign = group.align;
+    } else if (word === "pard") {
+      group.align = undefined;
+      paragraphAlign = undefined;
     }
   }
 
-  const text = output.join("").replace(/\u00a0/g, " ").replace(/\u0000/g, "").replace(/\n+$/, "");
-  return { title, text: withoutLeadingTitle(text, title) };
+  if (runs.length || !paragraphs.length) finishParagraph(groups[groups.length - 1]);
+  // A final \par is a paragraph terminator, not an extra poem stanza.
+  if (paragraphs.length > 1 && !paragraphs[paragraphs.length - 1].text) paragraphs.pop();
+  const imported = importedParagraphs(paragraphs, title);
+  return {
+    title,
+    text: imported.text.replace(/\u0000/g, ""),
+    editorHtml: imported.editorHtml,
+  };
 }
