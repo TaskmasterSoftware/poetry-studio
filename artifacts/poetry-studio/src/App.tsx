@@ -9,7 +9,7 @@ import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type Sc
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializePoemPdf,
-  isSavedPoemSource, serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
+  isBrowserPoemDraft, isSavedPoemSource, serializePoem, writePoemFile, type BrowserPoemDraft, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
@@ -45,6 +45,31 @@ function readStorage<T>(key: string, fallback: T): T {
 function readSavedPoemSource() {
   const source = readStorage<unknown>('poetry-studio-source', null);
   return isSavedPoemSource(source) ? source : null;
+}
+const draftsStorageKey = 'poetry-studio-drafts';
+const activeDraftStorageKey = 'poetry-studio-active-draft';
+function createDraftId() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function loadBrowserDraftStore() {
+  const savedDrafts = readStorage<unknown>(draftsStorageKey, null);
+  const drafts = Array.isArray(savedDrafts) ? savedDrafts.filter(isBrowserPoemDraft) : [];
+  if (drafts.length) {
+    const savedActiveId = readStorage<string>(activeDraftStorageKey, '');
+    return {
+      drafts,
+      activeDraftId: drafts.some((draft) => draft.id === savedActiveId) ? savedActiveId : drafts[0].id,
+    };
+  }
+  const migratedDraft: BrowserPoemDraft = {
+    id: createDraftId(),
+    title: readStorage('poetry-studio-title', 'The harbor at first light'),
+    editorHtml: readStorage('poetry-studio-manuscript', starter),
+    source: readSavedPoemSource(),
+  };
+  return { drafts: [migratedDraft], activeDraftId: migratedDraft.id };
 }
 function cleanText(html: string) {
   const node = document.createElement('div');
@@ -93,17 +118,22 @@ function findGrammar(text: string) {
 }
 
 function App() {
-  const [openedSource, setOpenedSource] = useState(readSavedPoemSource);
+  const [initialDraftStore] = useState(loadBrowserDraftStore);
+  const [drafts, setDrafts] = useState(initialDraftStore.drafts);
+  const draftsRef = useRef(drafts);
+  const [activeDraftId, setActiveDraftId] = useState(initialDraftStore.activeDraftId);
+  const [openedSource, setOpenedSource] = useState(() => initialDraftStore.drafts.find((draft) => draft.id === initialDraftStore.activeDraftId)?.source ?? null);
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileHandleRef = useRef<WritablePoemFileHandle | null>(null);
+  const fileHandlesRef = useRef(new Map<string, WritablePoemFileHandle>());
   const savedHtml = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
-  const [title, setTitle] = useState(() => readStorage('poetry-studio-title', 'The harbor at first light'));
-  const [html, setHtml] = useState(() => readStorage('poetry-studio-manuscript', starter));
+  const [title, setTitle] = useState(() => initialDraftStore.drafts.find((draft) => draft.id === initialDraftStore.activeDraftId)?.title ?? 'The harbor at first light');
+  const [html, setHtml] = useState(() => initialDraftStore.drafts.find((draft) => draft.id === initialDraftStore.activeDraftId)?.editorHtml ?? starter);
   const [settings, setSettings] = useState(() => readStorage('poetry-studio-settings', initialSettings));
   const [customWords, setCustomWords] = useState<string[]>(() => readStorage('poetry-studio-dictionary', []));
   const [activeTool, setActiveTool] = useState<Tool>('rhymes');
@@ -137,7 +167,11 @@ function App() {
     localStorage.setItem('poetry-studio-settings', JSON.stringify({ ...settings, dark: isDark, proof: proofOn, tab: tabStops, fontSize }));
   }, [isDark, proofOn, settings, tabStops, fontSize]);
   useEffect(() => { localStorage.setItem('poetry-studio-dictionary', JSON.stringify(customWords)); }, [customWords]);
-  useEffect(() => { localStorage.setItem('poetry-studio-title', JSON.stringify(title)); }, [title]);
+  useEffect(() => {
+    localStorage.setItem(draftsStorageKey, JSON.stringify(drafts));
+    draftsRef.current = drafts;
+  }, [drafts]);
+  useEffect(() => { localStorage.setItem(activeDraftStorageKey, JSON.stringify(activeDraftId)); }, [activeDraftId]);
   useEffect(() => {
     if (toast) { const timeout = window.setTimeout(() => setToast(''), 2600); return () => window.clearTimeout(timeout); }
     return undefined;
@@ -301,34 +335,80 @@ function App() {
     };
   }, [html, spellingErrors, grammars, proofOn]);
 
+  const persistDraftList = useCallback((nextDrafts: BrowserPoemDraft[]) => {
+    draftsRef.current = nextDrafts;
+    setDrafts(nextDrafts);
+    localStorage.setItem(draftsStorageKey, JSON.stringify(nextDrafts));
+  }, []);
+
+  const updateDraft = useCallback((draftId: string, changes: Partial<Omit<BrowserPoemDraft, 'id'>>) => {
+    const nextDrafts = draftsRef.current.map((draft) => draft.id === draftId ? { ...draft, ...changes } : draft);
+    persistDraftList(nextDrafts);
+  }, [persistDraftList]);
+
+  const activateDraft = useCallback((draft: BrowserPoemDraft) => {
+    window.clearTimeout(saveTimer.current);
+    window.clearTimeout(titleTimer.current);
+    fileHandleRef.current = fileHandlesRef.current.get(draft.id) ?? null;
+    setActiveDraftId(draft.id);
+    localStorage.setItem(activeDraftStorageKey, JSON.stringify(draft.id));
+    setOpenedSource(draft.source);
+    setTitle(draft.title);
+    setHtml(draft.editorHtml);
+    savedHtml.current = draft.editorHtml;
+    if (editorRef.current) editorRef.current.innerHTML = draft.editorHtml;
+    setDirty(false);
+    setSavedAt(draft.source ? 'Draft restored · updated copy available' : 'All changes saved');
+    setSelection('');
+    setRhymeQuery('');
+  }, []);
+
   const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML || html) => {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
-    localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
-    localStorage.setItem('poetry-studio-title', JSON.stringify(titleRef.current?.value || title));
+    updateDraft(activeDraftId, {
+      title: titleRef.current?.value || title,
+      editorHtml: nextHtml,
+      source: openedSource,
+    });
     savedHtml.current = nextHtml;
     setHtml(nextHtml);
     setDirty(false);
     setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
-  }, [html, title]);
+  }, [activeDraftId, html, openedSource, title, updateDraft]);
+
+  const switchDraft = useCallback((draftId: string) => {
+    if (draftId === activeDraftId) return;
+    persistNow();
+    const nextDraft = draftsRef.current.find((draft) => draft.id === draftId);
+    if (nextDraft) activateDraft(nextDraft);
+  }, [activeDraftId, activateDraft, persistNow]);
+
+  const createBrowserDraft = useCallback(() => {
+    persistNow();
+    const draft: BrowserPoemDraft = {
+      id: createDraftId(),
+      title: 'Untitled poem',
+      editorHtml: '<p><br></p>',
+      source: null,
+    };
+    persistDraftList([...draftsRef.current, draft]);
+    activateDraft(draft);
+    setSavedAt('New browser draft');
+    setToast('New browser draft created');
+  }, [activateDraft, persistDraftList, persistNow]);
 
   const applyOpenedPoem = useCallback((poem: { title: string; text: string; editorHtml?: string; fileName: string; format: PoemFileFormat }, handle: WritablePoemFileHandle | null) => {
+    persistNow();
     const nextHtml = poem.editorHtml ?? poemTextToEditorHtml(poem.text);
     const writableFormat = isWritablePoemFileFormat(poem.format) ? poem.format : null;
-    window.clearTimeout(saveTimer.current);
-    window.clearTimeout(titleTimer.current);
-    fileHandleRef.current = writableFormat ? handle : null;
     const source = writableFormat ? { fileName: poem.fileName, format: writableFormat } : null;
-    setOpenedSource(source);
-    setTitle(poem.title);
-    setHtml(nextHtml);
-    savedHtml.current = nextHtml;
-    if (editorRef.current) editorRef.current.innerHTML = nextHtml;
-    localStorage.setItem('poetry-studio-title', JSON.stringify(poem.title));
-    localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
-    if (source) localStorage.setItem('poetry-studio-source', JSON.stringify(source));
-    else localStorage.removeItem('poetry-studio-source');
-    setDirty(false);
+    const draft: BrowserPoemDraft = { id: createDraftId(), title: poem.title, editorHtml: nextHtml, source };
+    const nextDrafts = [...draftsRef.current, draft];
+    persistDraftList(nextDrafts);
+    activateDraft(draft);
+    if (writableFormat && handle) fileHandlesRef.current.set(draft.id, handle);
+    fileHandleRef.current = writableFormat ? handle : null;
     const isOfficeDocument = poem.format === 'rtf' || poem.format === 'docx' || poem.format === 'odt';
     const keepsBasicStyling = poem.format === 'docx' || poem.format === 'odt';
     setSavedAt(isOfficeDocument ? (keepsBasicStyling ? 'Imported with basic styling' : 'Imported as editable text') : 'Opened from device');
@@ -337,13 +417,10 @@ function App() {
         ? `Opened ${poem.fileName} with supported styling; saving keeps its text and title`
         : `Opened ${poem.fileName} as editable text; saving keeps its text and title`
       : `Opened ${poem.fileName}`);
-  }, []);
+  }, [activateDraft, persistDraftList, persistNow]);
 
   const openPoem = useCallback(async () => {
-    if (dirty) {
-      persistNow();
-      if (!window.confirm('Open another poem? Your latest changes are saved in this browser, but will replace the editor.')) return;
-    }
+    persistNow();
     try {
       const handle = await choosePoemFile();
       if (handle) {
@@ -356,7 +433,7 @@ function App() {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setToast(error instanceof Error ? error.message : 'Could not open that poem file.');
     }
-  }, [applyOpenedPoem, dirty, persistNow]);
+  }, [applyOpenedPoem, persistNow]);
 
   const onFallbackFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -425,12 +502,15 @@ function App() {
     setHtml(next); setDirty(true); setSavedAt('Saving…');
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      localStorage.setItem('poetry-studio-manuscript', JSON.stringify(next));
-      localStorage.setItem('poetry-studio-title', JSON.stringify(titleRef.current?.value || title));
+      updateDraft(activeDraftId, {
+        title: titleRef.current?.value || title,
+        editorHtml: next,
+        source: openedSource,
+      });
       savedHtml.current = next; setDirty(false);
       setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
     }, 550);
-  }, [title]);
+  }, [activeDraftId, openedSource, title, updateDraft]);
 
   const captureSelection = useCallback(() => {
     const selected = window.getSelection()?.toString().trim() || '';
@@ -502,8 +582,17 @@ function App() {
           <button className={`side-button ${activeTool === 'proof' ? 'active' : ''}`} onClick={() => chooseTool('proof')} data-testid="nav-proof"><SpellCheck/><span>Proofing</span></button>
           <button className={`side-button ${activeTool === 'scansion' ? 'active' : ''}`} onClick={() => chooseTool('scansion')} data-testid="nav-scansion"><Type/><span>Scansion</span></button>
         </nav>
-        <div className="side-label">On the desk</div>
-        <button className="side-button side-poem active" onClick={() => editorRef.current?.focus()}><FileText/><span>{title}</span></button>
+        <div className="side-label">Drafts · {drafts.length}</div>
+        <div className="draft-list" aria-label="Browser drafts">
+          {drafts.map((draft) => <button
+            key={draft.id}
+            className={`side-button side-poem ${draft.id === activeDraftId ? 'active' : ''}`}
+            title={draft.source ? `${draft.title} · ${draft.source.fileName} (${draft.source.format.toUpperCase()})` : draft.title}
+            aria-current={draft.id === activeDraftId ? 'page' : undefined}
+            onClick={() => switchDraft(draft.id)}
+            data-testid={`button-draft-${draft.id}`}
+          ><FileText/><span>{draft.title || 'Untitled poem'}</span></button>)}
+        </div>
         <div className="side-foot"><div className="side-note">A quiet place for unfinished things.<br/>Your work stays on this device.</div></div>
       </aside>
       <main className="main">
@@ -512,6 +601,10 @@ function App() {
           <div className="top-actions">
             <div className="save-state" data-testid="status-save"><span className="save-dot" style={{ background: dirty ? '#c49b64' : undefined }}/>{savedAt}</div>
             <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.html,.htm,.rtf,.docx,.odt,text/plain,text/markdown,text/html,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text" hidden onChange={onFallbackFileChange} data-testid="input-open-poem"/>
+            <select className="draft-switcher" aria-label="Switch browser draft" value={activeDraftId} onChange={(event) => switchDraft(event.target.value)} data-testid="select-browser-draft">
+              {drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.title || 'Untitled poem'}</option>)}
+            </select>
+            <button className="button ghost" onClick={createBrowserDraft} title="Create a new browser draft" aria-label="Create a new browser draft" data-testid="button-new-draft"><Plus/><span>New</span></button>
             <button className="button" onClick={openPoem} title={openedSource ? fileHandleRef.current ? `Currently open: ${openedSource.fileName}` : `Saved source: ${openedSource.fileName}; reopen it to save directly` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
             <button className="button ghost" aria-label="Toggle theme" title="Toggle theme" onClick={() => setIsDark((old) => !old)} data-testid="toggle-theme">{isDark ? <Sun/> : <Moon/>}</button>
             <button className="button" onClick={() => setModal('settings')} data-testid="button-settings"><Settings2/><span>Settings</span></button>
@@ -522,7 +615,7 @@ function App() {
           <section className="editor-column">
             <div className="doc-head">
               <div className="doc-meta">WORKING DRAFT <span style={{ color: '#b5a79a' }}> / </span>{formLabel.toUpperCase()}</div>
-              <input ref={titleRef} className="title-input" aria-label="Poem title" value={title} onChange={(event) => { const nextTitle = event.target.value; setTitle(nextTitle); setDirty(true); setSavedAt('Saving…'); window.clearTimeout(titleTimer.current); titleTimer.current = window.setTimeout(() => { localStorage.setItem('poetry-studio-title', JSON.stringify(nextTitle)); setDirty(false); setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`); }, 550); }} onBlur={() => persistNow()} data-testid="input-poem-title"/>
+              <input ref={titleRef} className="title-input" aria-label="Poem title" value={title} onChange={(event) => { const nextTitle = event.target.value; setTitle(nextTitle); setDirty(true); setSavedAt('Saving…'); window.clearTimeout(titleTimer.current); titleTimer.current = window.setTimeout(() => { updateDraft(activeDraftId, { title: nextTitle, editorHtml: editorRef.current?.innerHTML || html, source: openedSource }); setDirty(false); setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`); }, 550); }} onBlur={() => persistNow()} data-testid="input-poem-title"/>
             </div>
             <div className="toolbar" role="toolbar" aria-label="Writing tools">
               <div className="tool-group">

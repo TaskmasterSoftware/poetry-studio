@@ -30,6 +30,23 @@ export interface SavedPoemSource {
   format: WritablePoemFileFormat;
 }
 
+export interface BrowserPoemDraft {
+  id: string;
+  title: string;
+  editorHtml: string;
+  source: SavedPoemSource | null;
+}
+
+export function isBrowserPoemDraft(value: unknown): value is BrowserPoemDraft {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as Partial<BrowserPoemDraft>;
+  return typeof draft.id === 'string'
+    && draft.id.length > 0
+    && typeof draft.title === 'string'
+    && typeof draft.editorHtml === 'string'
+    && (draft.source === null || isSavedPoemSource(draft.source));
+}
+
 const supportedFormats: Record<string, PoemFileFormat> = {
   txt: 'txt',
   md: 'md',
