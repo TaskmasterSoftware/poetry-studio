@@ -53,6 +53,7 @@ export type ExportInlineStyle = {
   fontSize?: string;
 };
 export type ExportRun = { text: string; style: ExportInlineStyle };
+type OrderedListStyle = "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman";
 export type ExportParagraph = {
   runs: ExportRun[];
   align?: "left" | "center" | "right" | "justify";
@@ -64,6 +65,7 @@ export type ExportParagraph = {
   listId?: number;
   listStart?: number;
   listValue?: number;
+  listStyle?: OrderedListStyle;
 };
 
 const editorBlockTags = new Set(["BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "OL", "P", "PRE", "UL"]);
@@ -162,6 +164,82 @@ function editorParagraphStyle(element: Element): Pick<ExportParagraph, "align" |
   };
 }
 
+function cssOrderedListStyle(value: string): OrderedListStyle | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (["decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"].includes(normalized)) {
+    return normalized as OrderedListStyle;
+  }
+  if (normalized === "lower-latin") return "lower-alpha";
+  if (normalized === "upper-latin") return "upper-alpha";
+  return undefined;
+}
+
+function orderedListStyle(list: Element): OrderedListStyle {
+  let cssStyle: OrderedListStyle | undefined;
+  for (const declaration of (list.getAttribute("style") || "").split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim().toLowerCase();
+    if (property === "list-style-type") {
+      cssStyle = cssOrderedListStyle(value) || cssStyle;
+    } else if (property === "list-style") {
+      const shorthandStyle = value.split(/\s+/).map(cssOrderedListStyle).find(Boolean);
+      cssStyle = shorthandStyle || cssStyle;
+    }
+  }
+  if (cssStyle) return cssStyle;
+
+  switch ((list.getAttribute("type") || "").trim()) {
+    case "a": return "lower-alpha";
+    case "A": return "upper-alpha";
+    case "i": return "lower-roman";
+    case "I": return "upper-roman";
+    default: return "decimal";
+  }
+}
+
+function docxNumberFormat(style: OrderedListStyle) {
+  switch (style) {
+    case "lower-alpha": return "lowerLetter";
+    case "upper-alpha": return "upperLetter";
+    case "lower-roman": return "lowerRoman";
+    case "upper-roman": return "upperRoman";
+    default: return "decimal";
+  }
+}
+
+function rtfNumberFormat(style: OrderedListStyle) {
+  switch (style) {
+    case "upper-roman": return 1;
+    case "lower-roman": return 2;
+    case "upper-alpha": return 3;
+    case "lower-alpha": return 4;
+    default: return 0;
+  }
+}
+
+function odtNumberFormat(style: OrderedListStyle) {
+  switch (style) {
+    case "lower-alpha": return "a";
+    case "upper-alpha": return "A";
+    case "lower-roman": return "i";
+    case "upper-roman": return "I";
+    default: return "1";
+  }
+}
+
+function odtListStyleName(listType: "ordered" | "unordered", style?: OrderedListStyle) {
+  if (listType === "unordered") return "PoemBulletedList";
+  switch (style || "decimal") {
+    case "lower-alpha": return "PoemLowerAlphaList";
+    case "upper-alpha": return "PoemUpperAlphaList";
+    case "lower-roman": return "PoemLowerRomanList";
+    case "upper-roman": return "PoemUpperRomanList";
+    default: return "PoemNumberedList";
+  }
+}
+
 function editorParagraphRuns(nodes: Node[], inherited: ExportInlineStyle = {}, includeBlocks = false): ExportRun[] {
   const runs: ExportRun[] = [];
   const append = (text: string, style: ExportInlineStyle) => {
@@ -214,6 +292,7 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
       const listId = nextListId++;
       const listType = list.tagName.toUpperCase() === "OL" ? "ordered" : "unordered";
       const listStart = listType === "ordered" ? htmlListNumber(list, "start") : undefined;
+      const listStyle = listType === "ordered" ? orderedListStyle(list) : undefined;
       let isFirstItem = true;
       for (const child of Array.from(list.childNodes)) {
         if (child.nodeType !== Node.ELEMENT_NODE || (child as Element).tagName.toUpperCase() !== "LI") continue;
@@ -230,6 +309,7 @@ function editorParagraphs(source: string | undefined, text: string): ExportParag
           listId,
           listStart: isFirstItem ? listStart : undefined,
           listValue: listType === "ordered" ? htmlListNumber(item, "value") : undefined,
+          listStyle,
         });
         isFirstItem = false;
         const visitNestedLists = (container: ParentNode) => {
@@ -356,7 +436,8 @@ function docxNumbering(paragraphs: ExportParagraph[]) {
     const maxLevel = Math.max(0, ...group.map((paragraph) => paragraph.listLevel || 0));
     const levels = Array.from({ length: maxLevel + 1 }, (_, level) => {
       const indent = 720 * (level + 1);
-      const numberFormat = listType === "ordered" ? "decimal" : "bullet";
+      const levelParagraph = group.find((paragraph) => (paragraph.listLevel || 0) === level) || group[0];
+      const numberFormat = listType === "ordered" ? docxNumberFormat(levelParagraph?.listStyle || "decimal") : "bullet";
       const marker = listType === "ordered" ? `%${level + 1}.` : "•";
       const font = listType === "ordered" ? "" : '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr>';
       return `<w:lvl w:ilvl="${level}"><w:start w:val="1"/><w:numFmt w:val="${numberFormat}"/><w:lvlText w:val="${marker}"/><w:lvlJc w:val="left"/>${font}<w:pPr><w:tabs><w:tab w:val="num" w:pos="${indent}"/></w:tabs><w:ind w:left="${indent}" w:hanging="360"/></w:pPr></w:lvl>`;
@@ -447,6 +528,7 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
     paragraph: ExportParagraph;
     listId: number;
     listType: "ordered" | "unordered";
+    listStyle?: OrderedListStyle;
     startValue?: number;
     children: OdtListItem[];
   };
@@ -464,6 +546,7 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
       paragraph,
       listId: paragraph.listId,
       listType: paragraph.listType,
+      listStyle: paragraph.listStyle,
       startValue: paragraph.listValue ?? paragraph.listStart,
       children: [],
     };
@@ -479,8 +562,9 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
       const first = items[index];
       let end = index + 1;
       while (end < items.length && items[end].listId === first.listId && items[end].listType === first.listType
+        && items[end].listStyle === first.listStyle
         && items[end].startValue === undefined) end += 1;
-      const listStyle = first.listType === "ordered" ? "PoemNumberedList" : "PoemBulletedList";
+      const listStyle = odtListStyleName(first.listType, first.listStyle);
       const listItems = items.slice(index, end).map((item) =>
         `<text:list-item>${paragraphXml(item.paragraph)}${renderItems(item.children)}</text:list-item>`,
       ).join("");
@@ -501,18 +585,21 @@ function odtParagraphs(paragraphs: ExportParagraph[], names: Map<string, string>
       }
       let end = index + 1;
       while (end < nodes.length && "paragraph" in nodes[end]
-        && nodes[end].listId === node.listId && nodes[end].listType === node.listType) end += 1;
+        && nodes[end].listId === node.listId && nodes[end].listType === node.listType
+        && nodes[end].listStyle === node.listStyle) end += 1;
       output += renderItems(nodes.slice(index, end) as OdtListItem[]);
       index = end;
     }
     return output;
   };
-  const hasOrdered = paragraphs.some((paragraph) => paragraph.listType === "ordered");
   const hasUnordered = paragraphs.some((paragraph) => paragraph.listType === "unordered");
+  const orderedStyles = Array.from(new Set(paragraphs
+    .filter((paragraph) => paragraph.listType === "ordered")
+    .map((paragraph) => paragraph.listStyle || "decimal")));
   const listStyles = [
-    hasOrdered ? `<text:list-style style:name="PoemNumberedList">${Array.from({ length: 10 }, (_, level) =>
-      `<text:list-level-style-number text:level="${level + 1}" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="${0.25 * (level + 1)}in" text:min-label-width="0.25in"/></text:list-level-style-number>`,
-    ).join("")}</text:list-style>` : "",
+    ...orderedStyles.map((style) => `<text:list-style style:name="${odtListStyleName("ordered", style)}">${Array.from({ length: 10 }, (_, level) =>
+      `<text:list-level-style-number text:level="${level + 1}" style:num-format="${odtNumberFormat(style)}" style:num-suffix="."><style:list-level-properties text:space-before="${0.25 * (level + 1)}in" text:min-label-width="0.25in"/></text:list-level-style-number>`,
+    ).join("")}</text:list-style>`),
     hasUnordered ? `<text:list-style style:name="PoemBulletedList">${Array.from({ length: 10 }, (_, level) =>
       `<text:list-level-style-bullet text:level="${level + 1}" text:bullet-char="•"><style:list-level-properties text:space-before="${0.25 * (level + 1)}in" text:min-label-width="0.25in"/></text:list-level-properties></text:list-level-style-bullet>`,
     ).join("")}</text:list-style>` : "",
@@ -604,10 +691,11 @@ function rtfListTables(paragraphs: ExportParagraph[]) {
     const maxLevel = Math.max(0, ...group.map((paragraph) => paragraph.listLevel || 0));
     const levels = Array.from({ length: maxLevel + 1 }, (_, level) => {
       const indent = 720 * (level + 1);
+      const levelParagraph = group.find((paragraph) => (paragraph.listLevel || 0) === level) || group[0];
       const levelText = listType === "ordered"
         ? `\\leveltext\\'02\\'${level.toString(16).padStart(2, "0")}.;}{\\levelnumbers\\'01;`
         : "\\leveltext\\'01\\'B7;}{\\levelnumbers;";
-      const format = listType === "ordered" ? 0 : 23;
+      const format = listType === "ordered" ? rtfNumberFormat(levelParagraph?.listStyle || "decimal") : 23;
       const levelStart = instance.startLevel === level ? instance.startValue : 1;
       return `{\\listlevel\\levelnfc${format}\\leveljc0\\levelfollow0\\levelstartat${levelStart}\\levelspace0\\levelindent${indent}{${levelText}}\\fi-360\\li${indent}}`;
     }).join("");

@@ -552,3 +552,42 @@ test("preserves ordered-list starts and mid-list restarts in office exports", as
   assert.deepEqual(Array.from(odtXml.matchAll(/text:start-value="(-?\d+)"/g), (match) => match[1]), ["4", "12", "7"]);
   assert.match(odtXml, /<text:list text:style-name="PoemNumberedList" text:start-value="12"><text:list-item><text:p>Twelfth<\/text:p>/);
 });
+
+test("preserves alphabetic and Roman numbering in nested office lists", async () => {
+  enableXmlDom();
+  const editorHtml = '<ol type="A"><li>First alpha<ol style="list-style-type: lower-roman"><li>First roman</li><li>Second roman</li></ol></li><li>Second alpha</li></ol><ol style="list-style-type: lower-alpha"><li>Lower alpha</li></ol><ol style="list-style: upper-roman"><li>Upper Roman</li></ol>';
+  const text = "First alpha\nFirst roman\nSecond roman\nSecond alpha\nLower alpha\nUpper Roman";
+  const paragraphs = getEditorParagraphs(editorHtml, text);
+
+  assert.deepEqual(
+    paragraphs.map(({ listStyle }) => listStyle),
+    ["upper-alpha", "lower-roman", "lower-roman", "upper-alpha", "lower-alpha", "upper-roman"],
+  );
+
+  const docx = serializePoem("Styled lists", text, "docx", editorHtml) as Blob;
+  const docxArchive = unzipSync(new Uint8Array(await docx.arrayBuffer()));
+  const numberingXml = strFromU8(docxArchive["word/numbering.xml"]);
+  for (const format of ["upperLetter", "lowerRoman", "lowerLetter", "upperRoman"]) {
+    assert.match(numberingXml, new RegExp(`<w:numFmt w:val="${format}"\\/>`));
+  }
+  assert.match(numberingXml, /<w:lvl w:ilvl="1"><w:start w:val="1"\/><w:numFmt w:val="lowerRoman"\/>/);
+
+  const rtf = serializePoem("Styled lists", text, "rtf", editorHtml) as Blob;
+  const rtfText = await rtf.text();
+  for (const format of [1, 2, 3, 4]) assert.match(rtfText, new RegExp(`\\\\levelnfc${format}(?:\\\\|\\})`));
+  assert.match(rtfText, /\\levelnfc2\\leveljc0\\levelfollow0\\levelstartat1\\levelspace0\\levelindent1440/);
+
+  const odt = serializePoem("Styled lists", text, "odt", editorHtml) as Blob;
+  const odtArchive = unzipSync(new Uint8Array(await odt.arrayBuffer()));
+  const odtXml = strFromU8(odtArchive["content.xml"]);
+  for (const [styleName, format] of [
+    ["PoemUpperAlphaList", "A"],
+    ["PoemLowerRomanList", "i"],
+    ["PoemLowerAlphaList", "a"],
+    ["PoemUpperRomanList", "I"],
+  ]) {
+    assert.match(odtXml, new RegExp(`<text:list-style style:name="${styleName}">`));
+    assert.match(odtXml, new RegExp(`<text:list-level-style-number text:level="1" style:num-format="${format}"`));
+  }
+  assert.match(odtXml, /<text:list text:style-name="PoemUpperAlphaList"><text:list-item><text:p>First alpha<\/text:p><text:list text:style-name="PoemLowerRomanList">/);
+});
