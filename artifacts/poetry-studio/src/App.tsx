@@ -1,7 +1,7 @@
 import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignCenter, AlignLeft, AlignRight, BookOpen, Check, CircleHelp,
-  Download, Feather, FileText, FolderOpen, Indent, Italic, List, ListOrdered,
+  Download, Feather, FileText, FolderOpen, History, Indent, Italic, List, ListOrdered,
   Minus, Moon, PanelRight, Plus, Redo2, Search,
   Save, Settings2, SpellCheck, Strikethrough, Sun, Type, Underline, Undo2, X,
 } from 'lucide-react';
@@ -9,7 +9,8 @@ import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type Sc
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializePoemPdf,
-  isBrowserPoemDraft, isSavedPoemSource, serializePoem, writePoemFile, type BrowserPoemDraft, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
+  appendBrowserPoemRevision, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, restoreBrowserPoemDraft, serializePoem, writePoemFile,
+  type BrowserPoemDraft, type BrowserPoemRevision, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
@@ -48,10 +49,18 @@ function readSavedPoemSource() {
 }
 const draftsStorageKey = 'poetry-studio-drafts';
 const activeDraftStorageKey = 'poetry-studio-active-draft';
+const revisionStorageKey = (draftId: string) => `poetry-studio-revisions-${draftId}`;
+const maxPoemRevisions = 20;
 function createDraftId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function readPoemRevisions(draftId: string): BrowserPoemRevision[] {
+  const saved = readStorage<unknown>(revisionStorageKey(draftId), []);
+  return Array.isArray(saved)
+    ? saved.filter(isBrowserPoemRevision).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, maxPoemRevisions)
+    : [];
 }
 function loadBrowserDraftStore() {
   const savedDrafts = readStorage<unknown>(draftsStorageKey, null);
@@ -122,6 +131,8 @@ function App() {
   const [drafts, setDrafts] = useState(initialDraftStore.drafts);
   const draftsRef = useRef(drafts);
   const [activeDraftId, setActiveDraftId] = useState(initialDraftStore.activeDraftId);
+  const [revisionHistory, setRevisionHistory] = useState(() => readPoemRevisions(initialDraftStore.activeDraftId));
+  const [selectedRevisionId, setSelectedRevisionId] = useState('');
   const [openedSource, setOpenedSource] = useState(() => initialDraftStore.drafts.find((draft) => draft.id === initialDraftStore.activeDraftId)?.source ?? null);
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
@@ -145,7 +156,7 @@ function App() {
   const [formQuery, setFormQuery] = useState('');
   const [proofOn, setProofOn] = useState(settings.proof);
   const [dismissed, setDismissed] = useState<string[]>([]);
-  const [modal, setModal] = useState<'export' | 'settings' | null>(null);
+  const [modal, setModal] = useState<'export' | 'settings' | 'history' | null>(null);
   const [toast, setToast] = useState('');
   const [savedAt, setSavedAt] = useState(() => openedSource ? 'Draft restored · updated copy available' : 'All changes saved');
   const [dirty, setDirty] = useState(false);
@@ -346,12 +357,31 @@ function App() {
     persistDraftList(nextDrafts);
   }, [persistDraftList]);
 
+  const saveRevision = useCallback((draftId: string, revisionTitle: string, editorHtml: string) => {
+    const history = readPoemRevisions(draftId);
+    const revision: BrowserPoemRevision = {
+      id: createDraftId(),
+      title: revisionTitle,
+      editorHtml,
+      createdAt: new Date().toISOString(),
+    };
+    const nextHistory = appendBrowserPoemRevision(history, revision, maxPoemRevisions);
+    if (nextHistory !== history && !(history[0]?.title === revisionTitle && history[0]?.editorHtml === editorHtml)) {
+      localStorage.setItem(revisionStorageKey(draftId), JSON.stringify(nextHistory));
+    }
+    if (draftId === activeDraftId) setRevisionHistory(nextHistory);
+    return nextHistory;
+  }, [activeDraftId]);
+
   const activateDraft = useCallback((draft: BrowserPoemDraft) => {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
     fileHandleRef.current = fileHandlesRef.current.get(draft.id) ?? null;
     setActiveDraftId(draft.id);
     localStorage.setItem(activeDraftStorageKey, JSON.stringify(draft.id));
+    const nextHistory = readPoemRevisions(draft.id);
+    setRevisionHistory(nextHistory);
+    setSelectedRevisionId(nextHistory[0]?.id ?? '');
     setOpenedSource(draft.source);
     setTitle(draft.title);
     setHtml(draft.editorHtml);
@@ -363,19 +393,53 @@ function App() {
     setRhymeQuery('');
   }, []);
 
-  const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML || html) => {
+  const persistNow = useCallback((nextHtml = editorRef.current?.innerHTML ?? html) => {
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
+    const currentTitle = titleRef.current?.value || title;
     updateDraft(activeDraftId, {
-      title: titleRef.current?.value || title,
+      title: currentTitle,
       editorHtml: nextHtml,
       source: openedSource,
     });
+    saveRevision(activeDraftId, currentTitle, nextHtml);
     savedHtml.current = nextHtml;
     setHtml(nextHtml);
     setDirty(false);
     setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
-  }, [activeDraftId, html, openedSource, title, updateDraft]);
+  }, [activeDraftId, html, openedSource, saveRevision, title, updateDraft]);
+
+  const openHistory = useCallback(() => {
+    persistNow();
+    const history = readPoemRevisions(activeDraftId);
+    setRevisionHistory(history);
+    setSelectedRevisionId(history[0]?.id ?? '');
+    setModal('history');
+  }, [activeDraftId, persistNow]);
+
+  const restoreRevision = useCallback(() => {
+    const revision = revisionHistory.find((item) => item.id === selectedRevisionId);
+    if (!revision) return;
+    window.clearTimeout(saveTimer.current);
+    window.clearTimeout(titleTimer.current);
+    const currentTitle = titleRef.current?.value || title;
+    const currentHtml = editorRef.current?.innerHTML ?? html;
+    saveRevision(activeDraftId, currentTitle, currentHtml);
+    const activeDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
+    if (!activeDraft) return;
+    const restoredDraft = restoreBrowserPoemDraft(activeDraft, revision);
+    persistDraftList(draftsRef.current.map((draft) => draft.id === activeDraftId ? restoredDraft : draft));
+    saveRevision(activeDraftId, revision.title, revision.editorHtml);
+    setTitle(revision.title);
+    setHtml(revision.editorHtml);
+    if (titleRef.current) titleRef.current.value = revision.title;
+    if (editorRef.current) editorRef.current.innerHTML = revision.editorHtml;
+    savedHtml.current = revision.editorHtml;
+    setDirty(false);
+    setSavedAt('Earlier version restored');
+    setModal(null);
+    setToast('Earlier version restored');
+  }, [activeDraftId, html, persistDraftList, revisionHistory, saveRevision, selectedRevisionId, title]);
 
   const switchDraft = useCallback((draftId: string) => {
     if (draftId === activeDraftId) return;
@@ -449,7 +513,7 @@ function App() {
 
   const savePoem = useCallback(async () => {
     const currentTitle = titleRef.current?.value || title;
-    const currentHtml = editorRef.current?.innerHTML || html;
+    const currentHtml = editorRef.current?.innerHTML ?? html;
     const currentText = cleanText(currentHtml);
     const handle = fileHandleRef.current;
     const format = openedSource?.format ?? null;
@@ -502,15 +566,31 @@ function App() {
     setHtml(next); setDirty(true); setSavedAt('Saving…');
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
+      const currentTitle = titleRef.current?.value || title;
       updateDraft(activeDraftId, {
-        title: titleRef.current?.value || title,
+        title: currentTitle,
         editorHtml: next,
         source: openedSource,
       });
+      saveRevision(activeDraftId, currentTitle, next);
       savedHtml.current = next; setDirty(false);
       setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
     }, 550);
-  }, [activeDraftId, openedSource, title, updateDraft]);
+  }, [activeDraftId, openedSource, saveRevision, title, updateDraft]);
+
+  const onTitleChange = useCallback((nextTitle: string) => {
+    setTitle(nextTitle);
+    setDirty(true);
+    setSavedAt('Saving…');
+    window.clearTimeout(titleTimer.current);
+    titleTimer.current = window.setTimeout(() => {
+      const currentHtml = editorRef.current?.innerHTML ?? html;
+      updateDraft(activeDraftId, { title: nextTitle, editorHtml: currentHtml, source: openedSource });
+      saveRevision(activeDraftId, nextTitle, currentHtml);
+      setDirty(false);
+      setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+    }, 550);
+  }, [activeDraftId, html, openedSource, saveRevision, updateDraft]);
 
   const captureSelection = useCallback(() => {
     const selected = window.getSelection()?.toString().trim() || '';
@@ -570,6 +650,7 @@ function App() {
   const toolbarButton = (label: string, icon: ReactNode, action: () => void, selected = false) => (
     <button className={`tool ${selected ? 'selected' : ''}`} title={label} aria-label={label} data-testid={`tool-${label.toLowerCase().replace(/\s+/g, '-')}`} onMouseDown={(event) => event.preventDefault()} onClick={action}>{icon}</button>
   );
+  const selectedRevision = revisionHistory.find((revision) => revision.id === selectedRevisionId) ?? revisionHistory[0];
 
   return (
     <div className={`studio ${isDark ? 'dark' : ''}`}>
@@ -604,6 +685,7 @@ function App() {
             <select className="draft-switcher" aria-label="Switch browser draft" value={activeDraftId} onChange={(event) => switchDraft(event.target.value)} data-testid="select-browser-draft">
               {drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.title || 'Untitled poem'}</option>)}
             </select>
+            <button className="button ghost" onClick={openHistory} title="View earlier saved versions" data-testid="button-version-history"><History/><span>History</span></button>
             <button className="button ghost" onClick={createBrowserDraft} title="Create a new browser draft" aria-label="Create a new browser draft" data-testid="button-new-draft"><Plus/><span>New</span></button>
             <button className="button" onClick={openPoem} title={openedSource ? fileHandleRef.current ? `Currently open: ${openedSource.fileName}` : `Saved source: ${openedSource.fileName}; reopen it to save directly` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
             <button className="button ghost" aria-label="Toggle theme" title="Toggle theme" onClick={() => setIsDark((old) => !old)} data-testid="toggle-theme">{isDark ? <Sun/> : <Moon/>}</button>
@@ -615,7 +697,7 @@ function App() {
           <section className="editor-column">
             <div className="doc-head">
               <div className="doc-meta">WORKING DRAFT <span style={{ color: '#b5a79a' }}> / </span>{formLabel.toUpperCase()}</div>
-              <input ref={titleRef} className="title-input" aria-label="Poem title" value={title} onChange={(event) => { const nextTitle = event.target.value; setTitle(nextTitle); setDirty(true); setSavedAt('Saving…'); window.clearTimeout(titleTimer.current); titleTimer.current = window.setTimeout(() => { updateDraft(activeDraftId, { title: nextTitle, editorHtml: editorRef.current?.innerHTML || html, source: openedSource }); setDirty(false); setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`); }, 550); }} onBlur={() => persistNow()} data-testid="input-poem-title"/>
+              <input ref={titleRef} className="title-input" aria-label="Poem title" value={title} onChange={(event) => onTitleChange(event.target.value)} onBlur={() => persistNow()} data-testid="input-poem-title"/>
             </div>
             <div className="toolbar" role="toolbar" aria-label="Writing tools">
               <div className="tool-group">
@@ -738,8 +820,25 @@ function App() {
       </main>
       {modal && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
         <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
-          {modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>A fixed-layout copy with your title, lines, and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
+          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
+          {modal === 'history' ? <><div className="history-layout">
+              <div className="history-list" aria-label="Saved versions">
+                {revisionHistory.length ? revisionHistory.map((revision) => <button
+                  key={revision.id}
+                  type="button"
+                  className={`history-item ${selectedRevision?.id === revision.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedRevisionId(revision.id)}
+                  aria-pressed={selectedRevision?.id === revision.id}
+                  data-testid={`button-version-${revision.id}`}
+                ><strong>{revision.title || 'Untitled poem'}</strong><span>{new Date(revision.createdAt).toLocaleString()}</span></button>) : <div className="empty-hint">No saved versions yet.</div>}
+              </div>
+              {selectedRevision && <section className="history-preview" aria-label="Version preview">
+                <div className="field-label">Preview · {new Date(selectedRevision.createdAt).toLocaleString()}</div>
+                <h3>{selectedRevision.title || 'Untitled poem'}</h3>
+                <pre>{cleanText(selectedRevision.editorHtml) || 'This version has no manuscript text.'}</pre>
+              </section>}
+            </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Cancel</button><button className="button primary" disabled={!selectedRevision} onClick={restoreRevision} data-testid="button-restore-version"><History/>Restore this version</button></div></> :
+          modal === 'export' ? <><div className="panel-card"><div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Plain text</strong><p>Preserves the line breaks, ready for any text editor.</p><button className="button primary" style={{ marginTop: 10 }} onClick={() => exportPoem('txt')} data-testid="button-export-txt"><Download/>Export .txt</button></div><div className="form-item"><strong>PDF</strong><p>A fixed-layout copy with your title, lines, and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('pdf')} data-testid="button-export-pdf"><Download/>Export .pdf</button></div><div className="form-item"><strong>HTML document</strong><p>A clean document with your title and stanza breaks.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('html')} data-testid="button-export-html"><Download/>Export .html</button></div><div className="form-item"><strong>Word document</strong><p>A formatted document you can open in Microsoft Word and other word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('docx')} data-testid="button-export-docx"><Download/>Export .docx</button></div><div className="form-item"><strong>Rich text</strong><p>A widely compatible document format for word processors.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('rtf')} data-testid="button-export-rtf"><Download/>Export .rtf</button></div><div className="form-item"><strong>OpenDocument text</strong><p>An editable document format for LibreOffice and other compatible apps.</p><button className="button" style={{ marginTop: 10 }} onClick={() => exportPoem('odt')} data-testid="button-export-odt"><Download/>Export .odt</button></div></div><div className="panel-sub">Your manuscript is stored locally in this browser. Export a copy before clearing browser data.</div></> :
             <><div className="form-grid">
               <label><span className="field-label">Tab stop</span><select className="text-field" value={tabStops} onChange={(event) => setTabStops(event.target.value)} data-testid="select-tab-stops"><option>2 spaces</option><option>4 spaces</option><option>8 spaces</option></select></label>
               <label><span className="field-label">Editor size</span><select className="text-field" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} data-testid="settings-font-size">{[16,17,18,19,20,22,24,28].map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>

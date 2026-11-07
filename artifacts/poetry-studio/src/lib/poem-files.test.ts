@@ -3,7 +3,8 @@ import { after, test } from "node:test";
 import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isSavedPoemSource, readPoemFile, serializePoem, serializePoemPdf, writePoemFile,
+  appendBrowserPoemRevision, choosePoemFile, downloadPoemFile, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, readPoemFile,
+  restoreBrowserPoemDraft, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
 import { readRtf } from "./document-import";
@@ -63,6 +64,37 @@ test("validates browser drafts and keeps imported source metadata attached", () 
   assert.equal(isBrowserPoemDraft({ ...importedDraft, source: { fileName: "notes.exe", format: "exe" } }), false);
   assert.equal(isBrowserPoemDraft({ ...importedDraft, source: null }), true);
   assert.equal(isBrowserPoemDraft({ ...importedDraft, editorHtml: 4 }), false);
+});
+
+test("validates and bounds local poem revision history", () => {
+  const first = { id: "rev-1", title: "Before", editorHtml: "<p>First line</p>", createdAt: "2026-11-07T10:00:00.000Z" };
+  const second = { id: "rev-2", title: "After", editorHtml: "<p>Second line</p>", createdAt: "2026-11-07T10:01:00.000Z" };
+
+  assert.equal(isBrowserPoemRevision(first), true);
+  assert.equal(isBrowserPoemRevision({ ...first, createdAt: "not a date" }), false);
+  assert.deepEqual(appendBrowserPoemRevision([first], second, 1), [second]);
+  assert.deepEqual(appendBrowserPoemRevision([second], { ...second, id: "rev-duplicate" }), [second]);
+});
+
+test("restoring a revision keeps the draft's original file format association", () => {
+  const draft = {
+    id: "draft-night",
+    title: "Changed title",
+    editorHtml: "<p>Changed manuscript</p>",
+    source: { fileName: "night-poem.docx", format: "docx" as const },
+  };
+  const revision = {
+    id: "rev-1",
+    title: "Earlier title",
+    editorHtml: "<p>Earlier manuscript</p>",
+    createdAt: "2026-11-07T10:00:00.000Z",
+  };
+
+  assert.deepEqual(restoreBrowserPoemDraft(draft, revision), {
+    ...draft,
+    title: revision.title,
+    editorHtml: revision.editorHtml,
+  });
 });
 
 test("imports DOCX emphasis and paragraph layout without changing poem structure", async () => {

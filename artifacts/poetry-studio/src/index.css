@@ -226,6 +226,15 @@
 .modal-x { border:0;background:transparent;color:#708077;padding:5px; }
 .modal-x svg { width:17px;height:17px; }
 .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+.history-layout { display:grid; grid-template-columns:minmax(145px,.8fr) minmax(0,1.4fr); gap:14px; min-height:180px; }
+.history-list { display:grid; align-content:start; gap:6px; max-height:330px; overflow:auto; }
+.history-item { display:grid; gap:4px; text-align:left; padding:9px; border:1px solid #e4e1d7; border-radius:5px; background:#fbfaf5; color:#435950; }
+.history-item strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12px var(--app-font-serif); }
+.history-item span { color:#849087; font:9px var(--app-font-mono); }
+.history-item.selected { border-color:#87a193; background:#edf2e9; }
+.history-preview { min-width:0; padding:12px; border:1px solid #e4e1d7; border-radius:5px; background:#fbfaf5; }
+.history-preview h3 { margin:0 0 9px; color:#40584f; font:500 17px var(--app-font-serif); overflow-wrap:anywhere; }
+.history-preview pre { max-height:260px; margin:0; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:#52645a; font:13px/1.7 var(--app-font-serif); }
 .dialog-foot { display:flex;justify-content:flex-end;gap:8px;margin-top:18px; }
 .toast { position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#304d44;color:#f8f4e9;padding:10px 15px;border-radius:6px;font-size:11px;box-shadow:0 8px 25px #19382d22;z-index:30; animation:rise .2s ease-out; }
 .mobile-tools { display:none; }
@@ -244,6 +253,9 @@
 .dark .button:hover { background:#354b42; }
 .dark .switch-row,.dark .rhyme-row,.dark .form-item { border-color:#394c43; }
 .dark .proof-item { background:#2d4038; }
+.dark .history-item,.dark .history-preview { background:#253832;border-color:#3b5048;color:#e0e5d9; }
+.dark .history-item.selected { background:#31483e;border-color:#668b7a; }
+.dark .history-preview h3,.dark .history-preview pre { color:#e0e5d9; }
 .dark .notice { background:#31483e;color:#c3d4c6; }
 .dark .editor-footer,.dark .crumb,.dark .panel-sub,.dark .panel-sub span { color:#a6b6a9; }
 .dark .overlay { background:#0d1d19b8; }

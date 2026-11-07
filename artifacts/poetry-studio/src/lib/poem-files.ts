@@ -37,6 +37,39 @@ export interface BrowserPoemDraft {
   source: SavedPoemSource | null;
 }
 
+export interface BrowserPoemRevision {
+  id: string;
+  title: string;
+  editorHtml: string;
+  createdAt: string;
+}
+
+export function isBrowserPoemRevision(value: unknown): value is BrowserPoemRevision {
+  if (!value || typeof value !== 'object') return false;
+  const revision = value as Partial<BrowserPoemRevision>;
+  return typeof revision.id === 'string'
+    && revision.id.length > 0
+    && typeof revision.title === 'string'
+    && typeof revision.editorHtml === 'string'
+    && typeof revision.createdAt === 'string'
+    && Number.isFinite(Date.parse(revision.createdAt));
+}
+
+export function appendBrowserPoemRevision(
+  revisions: BrowserPoemRevision[],
+  revision: BrowserPoemRevision,
+  limit = 20,
+): BrowserPoemRevision[] {
+  const ordered = [...revisions].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const latest = ordered[0];
+  if (latest?.title === revision.title && latest.editorHtml === revision.editorHtml) return ordered;
+  return [revision, ...ordered].slice(0, Math.max(1, limit));
+}
+
+export function restoreBrowserPoemDraft(draft: BrowserPoemDraft, revision: BrowserPoemRevision): BrowserPoemDraft {
+  return { ...draft, title: revision.title, editorHtml: revision.editorHtml };
+}
+
 export function isBrowserPoemDraft(value: unknown): value is BrowserPoemDraft {
   if (!value || typeof value !== 'object') return false;
   const draft = value as Partial<BrowserPoemDraft>;
