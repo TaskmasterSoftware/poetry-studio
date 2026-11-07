@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { DOMParser as XmlDomParser } from "@xmldom/xmldom";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  choosePoemFile, downloadPoemFile, isSavedPoemSource, readPoemFile, serializePoem, writePoemFile,
+  choosePoemFile, downloadPoemFile, isSavedPoemSource, readPoemFile, serializePoem, serializePoemPdf, writePoemFile,
   type WritablePoemFileHandle,
 } from "./poem-files";
 import { readRtf } from "./document-import";
@@ -206,6 +206,11 @@ test("downloads an updated ODT copy when a file handle is unavailable", async ()
   const archive = unzipSync(new Uint8Array(await downloadedBlob!.arrayBuffer()));
   assert.equal(strFromU8(archive.mimetype), "application/vnd.oasis.opendocument.text");
   assert.match(strFromU8(archive["content.xml"]), /Another line/);
+
+  const pdf = serializePoemPdf("Night rain", "A line\n\nAnother line");
+  downloadPoemFile("night-rain.pdf", pdf, "pdf");
+  assert.equal(clickedAnchor?.download, "night-rain.pdf");
+  assert.equal(downloadedBlob?.type, "application/pdf");
 });
 
 test("serializes RTF with escaped structural characters and unicode", async () => {
@@ -217,6 +222,31 @@ test("serializes RTF with escaped structural characters and unicode", async () =
   assert.ok(text.includes("\\u8212?"));
   assert.ok(text.includes("\\u-10180?\\u-8409?"));
   assert.deepEqual(readRtf(text), { title: "Poem {title}", text: "A \\ line — 🌧" });
+});
+
+test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and readable punctuation", async () => {
+  const pdf = serializePoemPdf("Night rain — bright", "First bright line\nSecond line\n\nLast line");
+  assert.equal(pdf.type, "application/pdf");
+  const source = await pdf.text();
+  assert.match(source, /^%PDF-1\.4/);
+  assert.match(source, /\/Title <FEFF004E00690067006800740020007200610069006E002020140020006200720069006700680074>/);
+  assert.match(source, /<466972737420627269676874206C696E65>/);
+  assert.match(source, /<5365636F6E64206C696E65>/);
+  assert.match(source, /<4C617374206C696E65>/);
+  assert.match(source, /\/Count 1/);
+  assert.match(source, /\/WinAnsiEncoding/);
+
+  const xrefStart = Number(source.match(/startxref\n(\d+)/)?.[1]);
+  assert.equal(source.slice(xrefStart, xrefStart + 5), "xref\n");
+  const xrefEntries = source.slice(xrefStart).split("\n").slice(2);
+  const objectCount = Number(source.slice(xrefStart).match(/^xref\n0 (\d+)/)?.[1]);
+  for (let objectNumber = 1; objectNumber < objectCount; objectNumber += 1) {
+    const offset = Number(xrefEntries[objectNumber].slice(0, 10));
+    assert.equal(source.slice(offset, offset + `${objectNumber} 0 obj`.length), `${objectNumber} 0 obj`);
+  }
+
+  const multipagePdf = await serializePoemPdf("Long poem", Array.from({ length: 120 }, (_, index) => `Line ${index + 1}`).join("\n")).text();
+  assert.match(multipagePdf, /\/Count [2-9]\d*/);
 });
 
 test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => {

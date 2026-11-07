@@ -4,6 +4,7 @@ import {
 
 export type WritablePoemFileFormat = 'txt' | 'md' | 'html' | 'rtf' | 'docx' | 'odt';
 export type PoemFileFormat = WritablePoemFileFormat;
+export type DownloadablePoemFileFormat = WritablePoemFileFormat | 'pdf';
 
 export interface WritablePoemFileHandle {
   name: string;
@@ -192,14 +193,121 @@ export function serializePoem(title: string, text: string, format: WritablePoemF
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${content}</article></body></html>`;
 }
 
-export function downloadPoemFile(fileName: string, content: string | Blob, format: WritablePoemFileFormat) {
-  const mimeTypes: Record<WritablePoemFileFormat, string> = {
+const winAnsiSpecialCharacters = new Map<number, number>([
+  [0x20ac, 0x80], [0x201a, 0x82], [0x0192, 0x83], [0x201e, 0x84], [0x2026, 0x85],
+  [0x2020, 0x86], [0x2021, 0x87], [0x02c6, 0x88], [0x2030, 0x89], [0x0160, 0x8a],
+  [0x2039, 0x8b], [0x0152, 0x8c], [0x017d, 0x8e], [0x2018, 0x91], [0x2019, 0x92],
+  [0x201c, 0x93], [0x201d, 0x94], [0x2022, 0x95], [0x2013, 0x96], [0x2014, 0x97],
+  [0x02dc, 0x98], [0x2122, 0x99], [0x0161, 0x9a], [0x203a, 0x9b], [0x0153, 0x9c],
+  [0x017e, 0x9e], [0x0178, 0x9f],
+]);
+
+function winAnsiHex(value: string) {
+  return Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0)!;
+    const byte = winAnsiSpecialCharacters.get(codePoint)
+      ?? (codePoint <= 0x7f || (codePoint >= 0xa0 && codePoint <= 0xff) ? codePoint : 0x3f);
+    return byte.toString(16).padStart(2, '0');
+  }).join('').toUpperCase();
+}
+
+function pdfUnicodeHex(value: string) {
+  const bytes = [0xfe, 0xff];
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    bytes.push(codeUnit >> 8, codeUnit & 0xff);
+  }
+  return bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function wrapPdfLine(value: string, maxCharacters: number) {
+  let remaining = Array.from(value);
+  const wrapped: string[] = [];
+  while (remaining.length > maxCharacters) {
+    let splitAt = remaining.slice(0, maxCharacters + 1).lastIndexOf(' ');
+    if (splitAt < 1) splitAt = maxCharacters;
+    wrapped.push(remaining.slice(0, splitAt).join('').trimEnd());
+    remaining = remaining.slice(splitAt);
+    while (remaining[0] === ' ') remaining.shift();
+  }
+  wrapped.push(remaining.join(''));
+  return wrapped;
+}
+
+function buildPdf(title: string, text: string) {
+  const pages: string[][] = [[]];
+  let y = 720;
+  const addPage = () => {
+    pages.push([]);
+    y = 720;
+  };
+  const addText = (value: string, font: 'F1' | 'F2', size: number) => {
+    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
+  };
+
+  const titleLines = wrapPdfLine(title.trim() || 'Untitled poem', 42);
+  for (const line of titleLines) {
+    addText(line, 'F2', 20);
+    y -= 25;
+  }
+  y -= 12;
+
+  for (const sourceLine of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (!sourceLine) {
+      y -= 12;
+      continue;
+    }
+    for (const line of wrapPdfLine(sourceLine, 88)) {
+      if (y < 72) addPage();
+      addText(line, 'F1', 11);
+      y -= 15;
+    }
+  }
+
+  const objects: string[] = [];
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${5 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
+  objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
+  objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+
+  pages.forEach((commands, index) => {
+    const pageNumber = 5 + index * 2;
+    const contentNumber = pageNumber + 1;
+    const stream = `${commands.join('\n')}\n`;
+    objects[pageNumber] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentNumber} 0 R >>`;
+    objects[contentNumber] = `<< /Length ${stream.length} >>\nstream\n${stream}endstream`;
+  });
+
+  const infoNumber = objects.length;
+  objects[infoNumber] = `<< /Title <${pdfUnicodeHex(title.trim() || 'Untitled poem')}> /Producer (Poetry Studio) >>`;
+  let pdf = '%PDF-1.4\n%Poetry Studio\n';
+  const offsets = [0];
+  for (let objectNumber = 1; objectNumber < objects.length; objectNumber += 1) {
+    offsets[objectNumber] = pdf.length;
+    pdf += `${objectNumber} 0 obj\n${objects[objectNumber]}\nendobj\n`;
+  }
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+  for (let objectNumber = 1; objectNumber < objects.length; objectNumber += 1) {
+    pdf += `${String(offsets[objectNumber]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R /Info ${infoNumber} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return pdf;
+}
+
+export function serializePoemPdf(title: string, text: string) {
+  return new Blob([buildPdf(title, text)], { type: 'application/pdf' });
+}
+
+export function downloadPoemFile(fileName: string, content: string | Blob, format: DownloadablePoemFileFormat) {
+  const mimeTypes: Record<DownloadablePoemFileFormat, string> = {
     txt: 'text/plain;charset=utf-8',
     md: 'text/markdown;charset=utf-8',
     html: 'text/html;charset=utf-8',
     rtf: 'application/rtf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     odt: 'application/vnd.oasis.opendocument.text',
+    pdf: 'application/pdf',
   };
   const blob = content instanceof Blob ? content : new Blob([content], { type: mimeTypes[format] });
   const url = URL.createObjectURL(blob);
