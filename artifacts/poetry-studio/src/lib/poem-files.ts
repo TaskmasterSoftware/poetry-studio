@@ -1,7 +1,9 @@
-import { readDocx, readOdt, readRtf } from './document-import';
+import {
+  readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
+} from './document-import';
 
-export type WritablePoemFileFormat = 'txt' | 'md' | 'html';
-export type PoemFileFormat = WritablePoemFileFormat | 'rtf' | 'docx' | 'odt';
+export type WritablePoemFileFormat = 'txt' | 'md' | 'html' | 'rtf' | 'docx' | 'odt';
+export type PoemFileFormat = WritablePoemFileFormat;
 
 export interface WritablePoemFileHandle {
   name: string;
@@ -76,7 +78,7 @@ function fileFormat(fileName: string): PoemFileFormat {
 }
 
 export function isWritablePoemFileFormat(format: PoemFileFormat): format is WritablePoemFileFormat {
-  return format === 'txt' || format === 'md' || format === 'html';
+  return ['txt', 'md', 'html', 'rtf', 'docx', 'odt'].includes(format);
 }
 
 function textFromHtmlNode(node: Node): string {
@@ -164,16 +166,27 @@ export function poemTextToEditorHtml(text: string) {
     .join('');
 }
 
-export function serializePoem(title: string, text: string, format: WritablePoemFileFormat, editorHtml?: string) {
+export function serializePoem(title: string, text: string, format: WritablePoemFileFormat, editorHtml?: string): string | Blob {
   if (format === 'txt') return `${title}\n\n${text}`;
   if (format === 'md') return `# ${title}\n\n${text}`;
+  if (format === 'rtf') return serializeRtf(title, text);
+  if (format === 'docx') return serializeDocx(title, text);
+  if (format === 'odt') return serializeOdt(title, text);
   const content = sanitizeEditorHtml(editorHtml ?? poemTextToEditorHtml(text));
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${content}</article></body></html>`;
 }
 
-export function downloadPoemFile(fileName: string, content: string, format: WritablePoemFileFormat) {
-  const mimeType = format === 'html' ? 'text/html' : format === 'md' ? 'text/markdown' : 'text/plain';
-  const url = URL.createObjectURL(new Blob([content], { type: `${mimeType};charset=utf-8` }));
+export function downloadPoemFile(fileName: string, content: string | Blob, format: WritablePoemFileFormat) {
+  const mimeTypes: Record<WritablePoemFileFormat, string> = {
+    txt: 'text/plain;charset=utf-8',
+    md: 'text/markdown;charset=utf-8',
+    html: 'text/html;charset=utf-8',
+    rtf: 'application/rtf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    odt: 'application/vnd.oasis.opendocument.text',
+  };
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeTypes[format] });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = fileName;
@@ -183,7 +196,7 @@ export function downloadPoemFile(fileName: string, content: string, format: Writ
 
 export async function writePoemFile(
   handle: WritablePoemFileHandle,
-  content: string,
+  content: Blob | string,
 ): Promise<void> {
   const permissionOptions = { mode: 'readwrite' as const };
   let permission = await handle.queryPermission?.(permissionOptions);

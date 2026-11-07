@@ -324,10 +324,11 @@ function App() {
     localStorage.setItem('poetry-studio-title', JSON.stringify(poem.title));
     localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
     setDirty(false);
-    setSavedAt(writableFormat ? 'Opened from device' : 'Imported as editable text');
-    setToast(writableFormat
-      ? `Opened ${poem.fileName}`
-      : `Opened ${poem.fileName} as text; use Export to save a copy`);
+    const isOfficeDocument = poem.format === 'rtf' || poem.format === 'docx' || poem.format === 'odt';
+    setSavedAt(isOfficeDocument ? 'Imported as editable text' : 'Opened from device');
+    setToast(isOfficeDocument
+      ? `Opened ${poem.fileName} as editable text; saving keeps its text and title`
+      : `Opened ${poem.fileName}`);
   }, []);
 
   const openPoem = useCallback(async () => {
@@ -367,29 +368,44 @@ function App() {
     const currentText = cleanText(currentHtml);
     const handle = fileHandleRef.current;
     const format = fileFormatRef.current;
+    const content = format ? serializePoem(currentTitle, currentText, format, currentHtml) : null;
     if (handle && format) {
       try {
-        await writePoemFile(handle, serializePoem(currentTitle, currentText, format, currentHtml));
+        await writePoemFile(handle, content!);
         const editorUnchanged = editorRef.current?.innerHTML === currentHtml;
         const titleUnchanged = titleRef.current?.value === currentTitle;
         if (editorUnchanged && titleUnchanged) {
           persistNow(currentHtml);
-          setToast(`Saved to ${handle.name}`);
+          setToast(format === 'rtf' || format === 'docx' || format === 'odt'
+            ? `Saved to ${handle.name}; unsupported formatting was not retained`
+            : `Saved to ${handle.name}`);
           setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
         } else {
           setToast(`Saved to ${handle.name}; newer edits remain in the browser draft`);
           setSavedAt('Newer edits need saving');
         }
       } catch (error) {
-        setToast(error instanceof Error ? error.message : 'Could not save to this file.');
+        if (content) {
+          downloadPoemFile(openedFileName || handle.name, content, format);
+          const editorUnchanged = editorRef.current?.innerHTML === currentHtml;
+          const titleUnchanged = titleRef.current?.value === currentTitle;
+          if (editorUnchanged && titleUnchanged) persistNow(currentHtml);
+          else setSavedAt('Newer edits need saving');
+          setToast(format === 'rtf' || format === 'docx' || format === 'odt'
+            ? 'Could not update the original; an updated copy was downloaded without unsupported formatting'
+            : 'Could not update the original file; an updated copy was downloaded');
+        } else {
+          setToast(error instanceof Error ? error.message : 'Could not save to this file.');
+        }
       }
       return;
     }
     if (openedFileName && format) {
-      const content = serializePoem(currentTitle, currentText, format, currentHtml);
-      downloadPoemFile(openedFileName, content, format);
+      downloadPoemFile(openedFileName, content!, format);
       persistNow(currentHtml);
-      setToast('Updated copy downloaded; browser draft also saved');
+      setToast(format === 'rtf' || format === 'docx' || format === 'odt'
+        ? 'Updated copy downloaded; unsupported formatting was not retained'
+        : 'Updated copy downloaded; browser draft also saved');
       return;
     }
     persistNow(currentHtml);
