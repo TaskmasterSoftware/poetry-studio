@@ -8,8 +8,8 @@ import {
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import {
-  choosePoemFile, downloadPoemFile, poemTextToEditorHtml, readPoemFile,
-  serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileHandle,
+  choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile,
+  serializePoem, writePoemFile, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
@@ -51,7 +51,10 @@ function cleanText(html: string) {
     const element = current as HTMLElement;
     if (element.tagName === 'BR') return '\n';
     const content = Array.from(element.childNodes).map(readNode).join('');
-    return /^(P|DIV|LI|H[1-6]|BLOCKQUOTE)$/.test(element.tagName) ? `${content}\n` : content;
+    if (/^(P|DIV|LI|H[1-6]|BLOCKQUOTE)$/.test(element.tagName)) {
+      return element.tagName === 'P' && content === '\n' ? '\n' : `${content}\n`;
+    }
+    return content;
   };
   return Array.from(node.childNodes).map(readNode).join('').replace(/\u00a0/g, ' ').replace(/\n+$/, '');
 }
@@ -91,7 +94,7 @@ function App() {
   const titleRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileHandleRef = useRef<WritablePoemFileHandle | null>(null);
-  const fileFormatRef = useRef<PoemFileFormat | null>(null);
+  const fileFormatRef = useRef<WritablePoemFileFormat | null>(null);
   const savedHtml = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
@@ -308,10 +311,11 @@ function App() {
 
   const applyOpenedPoem = useCallback((poem: { title: string; text: string; fileName: string; format: PoemFileFormat }, handle: WritablePoemFileHandle | null) => {
     const nextHtml = poemTextToEditorHtml(poem.text);
+    const writableFormat = isWritablePoemFileFormat(poem.format) ? poem.format : null;
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
-    fileHandleRef.current = handle;
-    fileFormatRef.current = poem.format;
+    fileHandleRef.current = writableFormat ? handle : null;
+    fileFormatRef.current = writableFormat;
     setOpenedFileName(poem.fileName);
     setTitle(poem.title);
     setHtml(nextHtml);
@@ -320,8 +324,10 @@ function App() {
     localStorage.setItem('poetry-studio-title', JSON.stringify(poem.title));
     localStorage.setItem('poetry-studio-manuscript', JSON.stringify(nextHtml));
     setDirty(false);
-    setSavedAt('Opened from device');
-    setToast(`Opened ${poem.fileName}`);
+    setSavedAt(writableFormat ? 'Opened from device' : 'Imported as editable text');
+    setToast(writableFormat
+      ? `Opened ${poem.fileName}`
+      : `Opened ${poem.fileName} as text; use Export to save a copy`);
   }, []);
 
   const openPoem = useCallback(async () => {
@@ -482,7 +488,7 @@ function App() {
           <div className="crumb"><span>Manuscripts</span><span>/</span><strong>{title || 'Untitled poem'}</strong></div>
           <div className="top-actions">
             <div className="save-state" data-testid="status-save"><span className="save-dot" style={{ background: dirty ? '#c49b64' : undefined }}/>{savedAt}</div>
-            <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html" hidden onChange={onFallbackFileChange} data-testid="input-open-poem"/>
+            <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.html,.htm,.rtf,.docx,.odt,text/plain,text/markdown,text/html,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text" hidden onChange={onFallbackFileChange} data-testid="input-open-poem"/>
             <button className="button" onClick={openPoem} title={openedFileName ? `Currently open: ${openedFileName}` : 'Open a poem from your device'} data-testid="button-open-poem"><FolderOpen/><span>Open</span></button>
             <button className="button ghost" aria-label="Toggle theme" title="Toggle theme" onClick={() => setIsDark((old) => !old)} data-testid="toggle-theme">{isDark ? <Sun/> : <Moon/>}</button>
             <button className="button" onClick={() => setModal('settings')} data-testid="button-settings"><Settings2/><span>Settings</span></button>

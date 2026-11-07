@@ -1,4 +1,7 @@
-export type PoemFileFormat = 'txt' | 'md' | 'html';
+import { readDocx, readOdt, readRtf } from './document-import';
+
+export type WritablePoemFileFormat = 'txt' | 'md' | 'html';
+export type PoemFileFormat = WritablePoemFileFormat | 'rtf' | 'docx' | 'odt';
 
 export interface WritablePoemFileHandle {
   name: string;
@@ -24,6 +27,9 @@ const supportedFormats: Record<string, PoemFileFormat> = {
   markdown: 'md',
   html: 'html',
   htm: 'html',
+  rtf: 'rtf',
+  docx: 'docx',
+  odt: 'odt',
 };
 
 function escapeHtml(value: string) {
@@ -38,8 +44,12 @@ function escapeHtml(value: string) {
 function fileFormat(fileName: string): PoemFileFormat {
   const extension = fileName.split('.').pop()?.toLowerCase() || '';
   const format = supportedFormats[extension];
-  if (!format) throw new Error('Choose a .txt, .md, or .html poem file.');
+  if (!format) throw new Error('Choose a .txt, .md, .html, .rtf, .docx, or .odt poem file.');
   return format;
+}
+
+export function isWritablePoemFileFormat(format: PoemFileFormat): format is WritablePoemFileFormat {
+  return format === 'txt' || format === 'md' || format === 'html';
 }
 
 function textFromHtmlNode(node: Node): string {
@@ -82,22 +92,30 @@ function markdownToText(source: string) {
 
 export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
   const format = fileFormat(file.name);
-  const source = await file.text();
   let extracted: { title: string; text: string };
 
-  if (format === 'html') {
-    extracted = htmlToText(source);
-  } else if (format === 'md') {
-    extracted = markdownToText(source);
+  if (format === 'docx') {
+    extracted = await readDocx(file);
+  } else if (format === 'odt') {
+    extracted = await readOdt(file);
   } else {
-    const normalized = source.replace(/\r\n?/g, '\n');
-    const titleBlock = normalized.match(/^([^\n]+)\n[ \t]*\n/);
-    extracted = titleBlock
-      ? { title: titleBlock[1].trim(), text: normalized.slice(titleBlock[0].length) }
-      : { title: '', text: normalized };
+    const source = await file.text();
+    if (format === 'rtf') {
+      extracted = readRtf(source);
+    } else if (format === 'html') {
+      extracted = htmlToText(source);
+    } else if (format === 'md') {
+      extracted = markdownToText(source);
+    } else {
+      const normalized = source.replace(/\r\n?/g, '\n');
+      const titleBlock = normalized.match(/^([^\n]+)\n[ \t]*\n/);
+      extracted = titleBlock
+        ? { title: titleBlock[1].trim(), text: normalized.slice(titleBlock[0].length) }
+        : { title: '', text: normalized };
+    }
   }
 
-  const fallbackTitle = file.name.replace(/\.(txt|md|markdown|html?)$/i, '').replace(/[_-]+/g, ' ').trim();
+  const fallbackTitle = file.name.replace(/\.(txt|md|markdown|html?|rtf|docx|odt)$/i, '').replace(/[_-]+/g, ' ').trim();
   return {
     title: extracted.title || fallbackTitle || 'Untitled poem',
     text: extracted.text.replace(/\u0000/g, ''),
@@ -112,7 +130,7 @@ export function poemTextToEditorHtml(text: string) {
     .join('');
 }
 
-export function serializePoem(title: string, text: string, format: PoemFileFormat) {
+export function serializePoem(title: string, text: string, format: WritablePoemFileFormat) {
   if (format === 'txt') return `${title}\n\n${text}`;
   if (format === 'md') return `# ${title}\n\n${text}`;
   const paragraphs = text.replace(/\r\n?/g, '\n').split('\n')
@@ -121,7 +139,7 @@ export function serializePoem(title: string, text: string, format: PoemFileForma
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${paragraphs}</article></body></html>`;
 }
 
-export function downloadPoemFile(fileName: string, content: string, format: PoemFileFormat) {
+export function downloadPoemFile(fileName: string, content: string, format: WritablePoemFileFormat) {
   const mimeType = format === 'html' ? 'text/html' : format === 'md' ? 'text/markdown' : 'text/plain';
   const url = URL.createObjectURL(new Blob([content], { type: `${mimeType};charset=utf-8` }));
   const anchor = document.createElement('a');
@@ -168,6 +186,9 @@ export async function choosePoemFile(): Promise<WritablePoemFileHandle | null> {
         'text/plain': ['.txt'],
         'text/markdown': ['.md', '.markdown'],
         'text/html': ['.html', '.htm'],
+        'application/rtf': ['.rtf'],
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+        'application/vnd.oasis.opendocument.text': ['.odt'],
       },
     }],
   });
