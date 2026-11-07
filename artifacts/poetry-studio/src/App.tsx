@@ -309,8 +309,8 @@ function App() {
     setSavedAt(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
   }, [html, title]);
 
-  const applyOpenedPoem = useCallback((poem: { title: string; text: string; fileName: string; format: PoemFileFormat }, handle: WritablePoemFileHandle | null) => {
-    const nextHtml = poemTextToEditorHtml(poem.text);
+  const applyOpenedPoem = useCallback((poem: { title: string; text: string; editorHtml?: string; fileName: string; format: PoemFileFormat }, handle: WritablePoemFileHandle | null) => {
+    const nextHtml = poem.editorHtml ?? poemTextToEditorHtml(poem.text);
     const writableFormat = isWritablePoemFileFormat(poem.format) ? poem.format : null;
     window.clearTimeout(saveTimer.current);
     window.clearTimeout(titleTimer.current);
@@ -369,7 +369,7 @@ function App() {
     const format = fileFormatRef.current;
     if (handle && format) {
       try {
-        await writePoemFile(handle, serializePoem(currentTitle, currentText, format));
+        await writePoemFile(handle, serializePoem(currentTitle, currentText, format, currentHtml));
         const editorUnchanged = editorRef.current?.innerHTML === currentHtml;
         const titleUnchanged = titleRef.current?.value === currentTitle;
         if (editorUnchanged && titleUnchanged) {
@@ -386,7 +386,7 @@ function App() {
       return;
     }
     if (openedFileName && format) {
-      const content = serializePoem(currentTitle, currentText, format);
+      const content = serializePoem(currentTitle, currentText, format, currentHtml);
       downloadPoemFile(openedFileName, content, format);
       persistNow(currentHtml);
       setToast('Updated copy downloaded; browser draft also saved');
@@ -449,7 +449,7 @@ function App() {
     });
   };
   const exportPoem = (kind: 'txt' | 'html') => {
-    const content = kind === 'txt' ? `${title}\n\n${text}` : `<!doctype html><meta charset="utf-8"><title>${title}</title><article><h1>${title}</h1>${html}</article>`;
+    const content = kind === 'txt' ? `${title}\n\n${text}` : serializePoem(title, text, 'html', html);
     const blob = new Blob([content], { type: kind === 'txt' ? 'text/plain' : 'text/html' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'poem'}.${kind}`; anchor.click(); URL.revokeObjectURL(url);

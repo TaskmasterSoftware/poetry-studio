@@ -17,6 +17,7 @@ export interface WritablePoemFileHandle {
 export interface OpenedPoemFile {
   title: string;
   text: string;
+  editorHtml?: string;
   fileName: string;
   format: PoemFileFormat;
 }
@@ -39,6 +40,32 @@ function escapeHtml(value: string) {
     '>': '&gt;',
     '"': '&quot;',
   })[character] || character);
+}
+
+const safeEditorTags = new Set([
+  'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4',
+  'H5', 'H6', 'I', 'INS', 'LI', 'MARK', 'OL', 'P', 'PRE', 'S', 'STRIKE',
+  'STRONG', 'SUB', 'SUP', 'U', 'UL',
+]);
+const droppedHtmlTags = new Set([
+  'IFRAME', 'NOSCRIPT', 'OBJECT', 'SCRIPT', 'STYLE', 'SVG', 'TEMPLATE',
+]);
+
+function safeEditorNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || '');
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  const element = node as HTMLElement;
+  if (droppedHtmlTags.has(element.tagName)) return '';
+  const children = Array.from(element.childNodes).map(safeEditorNode).join('');
+  if (!safeEditorTags.has(element.tagName)) return children;
+  const tag = element.tagName.toLowerCase();
+  if (tag === 'br') return '<br>';
+  return `<${tag}>${children}</${tag}>`;
+}
+
+function sanitizeEditorHtml(source: string) {
+  const parsed = new DOMParser().parseFromString(source, 'text/html');
+  return Array.from(parsed.body.childNodes).map(safeEditorNode).join('');
 }
 
 function fileFormat(fileName: string): PoemFileFormat {
@@ -64,18 +91,21 @@ function textFromHtmlNode(node: Node): string {
     : content;
 }
 
-function htmlToText(source: string) {
+function htmlToEditorContent(source: string) {
   const parsed = new DOMParser().parseFromString(source, 'text/html');
   const root = parsed.querySelector('article, main') || parsed.body;
-  const heading = root.querySelector('h1, h2');
-  const title = heading?.textContent?.trim() || parsed.title.trim();
-  const content = Array.from(root.childNodes)
-    .filter((node) => node !== heading)
+  const contentRoot = root.cloneNode(true) as HTMLElement;
+  const heading = contentRoot.querySelector('h1, h2');
+  const title = (heading ? textFromHtmlNode(heading) : '').trim() || parsed.title.trim();
+  heading?.remove();
+  const editorHtml = Array.from(contentRoot.childNodes).map(safeEditorNode).join('');
+  const safeContent = new DOMParser().parseFromString(editorHtml, 'text/html').body;
+  const text = Array.from(safeContent.childNodes)
     .map(textFromHtmlNode)
     .join('')
     .replace(/\u00a0/g, ' ')
     .replace(/\n+$/, '');
-  return { title, text: content };
+  return { title, text, editorHtml };
 }
 
 function markdownToText(source: string) {
@@ -93,6 +123,7 @@ function markdownToText(source: string) {
 export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
   const format = fileFormat(file.name);
   let extracted: { title: string; text: string };
+  let editorHtml: string | undefined;
 
   if (format === 'docx') {
     extracted = await readDocx(file);
@@ -103,7 +134,9 @@ export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
     if (format === 'rtf') {
       extracted = readRtf(source);
     } else if (format === 'html') {
-      extracted = htmlToText(source);
+      const htmlContent = htmlToEditorContent(source);
+      extracted = htmlContent;
+      editorHtml = htmlContent.editorHtml;
     } else if (format === 'md') {
       extracted = markdownToText(source);
     } else {
@@ -119,6 +152,7 @@ export async function readPoemFile(file: File): Promise<OpenedPoemFile> {
   return {
     title: extracted.title || fallbackTitle || 'Untitled poem',
     text: extracted.text.replace(/\u0000/g, ''),
+    editorHtml,
     fileName: file.name,
     format,
   };
@@ -130,13 +164,11 @@ export function poemTextToEditorHtml(text: string) {
     .join('');
 }
 
-export function serializePoem(title: string, text: string, format: WritablePoemFileFormat) {
+export function serializePoem(title: string, text: string, format: WritablePoemFileFormat, editorHtml?: string) {
   if (format === 'txt') return `${title}\n\n${text}`;
   if (format === 'md') return `# ${title}\n\n${text}`;
-  const paragraphs = text.replace(/\r\n?/g, '\n').split('\n')
-    .map((line) => line ? `<p>${escapeHtml(line)}</p>` : '<p><br></p>')
-    .join('');
-  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${paragraphs}</article></body></html>`;
+  const content = sanitizeEditorHtml(editorHtml ?? poemTextToEditorHtml(text));
+  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><article><h1>${escapeHtml(title)}</h1>${content}</article></body></html>`;
 }
 
 export function downloadPoemFile(fileName: string, content: string, format: WritablePoemFileFormat) {
