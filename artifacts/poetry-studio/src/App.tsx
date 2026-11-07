@@ -1038,7 +1038,11 @@ function App() {
     try {
       const poems = drafts
         .filter((draft) => draft.bookId === bookToExport.id)
-        .map((draft) => ({ title: draft.title, text: cleanText(draft.editorHtml) }));
+        .map((draft) => ({
+          title: draft.title,
+          text: cleanText(draft.editorHtml),
+          editorHtml: draft.editorHtml,
+        }));
       const content = serializeBookPdf(bookToExport.title, poems, pdfExportOptions);
       const slug = bookToExport.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'poetry-book';
       downloadPoemFile(`${slug}.pdf`, content, 'pdf');

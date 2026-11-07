@@ -548,7 +548,11 @@ function buildPdf(title: string, text: string, editorHtml: string | undefined, o
   return assemblePdf(title, pages, options);
 }
 
-function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[], options: PdfExportOptions) {
+function buildBookPdf(
+  bookTitle: string,
+  poems: { title: string; text: string; editorHtml?: string }[],
+  options: PdfExportOptions,
+) {
   const layout = pdfLayout(options);
   const pages: string[][] = [[]];
   let y = layout.height - layout.margin;
@@ -576,16 +580,40 @@ function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[
     }
     if (y - 12 < layout.margin) addPage();
     y -= 12;
-    for (const sourceLine of poem.text.replace(/\r\n?/g, '\n').split('\n')) {
-      if (!sourceLine) {
+    const paragraphs = getEditorParagraphs(poem.editorHtml, poem.text);
+    for (const paragraph of paragraphs) {
+      const paragraphLines = splitPdfParagraphLines(paragraph.runs);
+      if (paragraphLines.every((line) => !line.length)) {
         if (y - 12 < layout.margin) addPage();
         y -= 12;
         continue;
       }
-      for (const line of wrapPdfLine(sourceLine, layout.bodyCharacters)) {
-        if (y < layout.margin) addPage();
-        addText(line, 'F1', 11);
-        y -= 15;
+      const leftIndent = cssMeasureToPdfPoints(paragraph.left);
+      const rightIndent = cssMeasureToPdfPoints(paragraph.right);
+      const firstLineIndent = cssMeasureToPdfPoints(paragraph.firstLine);
+      for (const [paragraphLineIndex, paragraphLine] of paragraphLines.entries()) {
+        const isFirstParagraphLine = paragraphLineIndex === 0;
+        const firstLineOffset = isFirstParagraphLine ? firstLineIndent : 0;
+        const availableWidth = layout.contentWidth - leftIndent - rightIndent - firstLineOffset;
+        const maxCharacters = Math.max(1, Math.floor(availableWidth / 5.5));
+        const wrappedLines = wrapPdfRuns(paragraphLine, maxCharacters);
+        for (const [wrappedLineIndex, lineRuns] of wrappedLines.entries()) {
+          if (y < layout.margin) addPage();
+          const lineLeft = layout.margin + leftIndent
+            + (isFirstParagraphLine && wrappedLineIndex === 0 ? firstLineIndent : 0);
+          const lineRight = layout.width - layout.margin - rightIndent;
+          appendStyledPdfLine(
+            pages[pages.length - 1],
+            lineRuns,
+            y,
+            layout,
+            paragraph.align,
+            paragraph.align === 'justify' && wrappedLineIndex < wrappedLines.length - 1,
+            lineLeft,
+            lineRight,
+          );
+          y -= 15;
+        }
       }
     }
   });
@@ -604,7 +632,7 @@ export function serializePoemPdf(
 
 export function serializeBookPdf(
   bookTitle: string,
-  poems: { title: string; text: string }[],
+  poems: { title: string; text: string; editorHtml?: string }[],
   options: PdfExportOptions = defaultPdfExportOptions,
 ) {
   if (!poems.length) throw new Error('Add at least one poem before downloading this book.');

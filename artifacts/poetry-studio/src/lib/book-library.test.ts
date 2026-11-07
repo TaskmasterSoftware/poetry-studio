@@ -95,6 +95,23 @@ test("book PDF starts each poem on a separate page", async () => {
   assert.match(pdf, /\/Count 2/);
 });
 
+test("book PDF preserves saved emphasis and alignment without styling plain entries", async () => {
+  const pdf = await serializeBookPdf("Night poems", [
+    {
+      title: "Styled",
+      text: "Bold Italic\nRight",
+      editorHtml: '<p style="text-align:center"><strong>Bold</strong> <em>Italic</em></p><p style="text-align:right">Right</p>',
+    },
+    { title: "Unstyled", text: "Plain\nline" },
+  ]).text();
+
+  assert.match(pdf, /BT \/F2 11 Tf/);
+  assert.match(pdf, /BT \/F3 11 Tf/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 512\.5 644 Td <5269676874>/);
+  assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 659 Td <506C61696E>/);
+  assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), 2);
+});
+
 test("book HTML sanitizer removes active content and preserves supported style", () => {
   const sanitized = sanitizeBookEditorHtml(
     '<p style="text-align:center; font-family:Georgia, serif; font-size:12pt; background-image:url(javascript:bad())" onmouseover="bad()"><span style=\'font-family:"Palatino Linotype", Palatino, serif; font-size:14pt\'><em>Line</em></span><iframe src="evil"></iframe></p>',
