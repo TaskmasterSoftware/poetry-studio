@@ -35,6 +35,7 @@ export interface BrowserPoemDraft {
   title: string;
   editorHtml: string;
   source: SavedPoemSource | null;
+  bookId?: string;
 }
 
 export interface BrowserPoemRevision {
@@ -77,6 +78,7 @@ export function isBrowserPoemDraft(value: unknown): value is BrowserPoemDraft {
     && draft.id.length > 0
     && typeof draft.title === 'string'
     && typeof draft.editorHtml === 'string'
+    && (draft.bookId === undefined || (typeof draft.bookId === 'string' && draft.bookId.length > 0))
     && (draft.source === null || isSavedPoemSource(draft.source));
 }
 
@@ -284,36 +286,7 @@ function wrapPdfLine(value: string, maxCharacters: number) {
   return wrapped;
 }
 
-function buildPdf(title: string, text: string) {
-  const pages: string[][] = [[]];
-  let y = 720;
-  const addPage = () => {
-    pages.push([]);
-    y = 720;
-  };
-  const addText = (value: string, font: 'F1' | 'F2', size: number) => {
-    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
-  };
-
-  const titleLines = wrapPdfLine(title.trim() || 'Untitled poem', 42);
-  for (const line of titleLines) {
-    addText(line, 'F2', 20);
-    y -= 25;
-  }
-  y -= 12;
-
-  for (const sourceLine of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (!sourceLine) {
-      y -= 12;
-      continue;
-    }
-    for (const line of wrapPdfLine(sourceLine, 88)) {
-      if (y < 72) addPage();
-      addText(line, 'F1', 11);
-      y -= 15;
-    }
-  }
-
+function assemblePdf(title: string, pages: string[][]) {
   const objects: string[] = [];
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${5 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
@@ -345,8 +318,87 @@ function buildPdf(title: string, text: string) {
   return pdf;
 }
 
+function buildPdf(title: string, text: string) {
+  const pages: string[][] = [[]];
+  let y = 720;
+  const addPage = () => {
+    pages.push([]);
+    y = 720;
+  };
+  const addText = (value: string, font: 'F1' | 'F2', size: number) => {
+    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
+  };
+
+  const titleLines = wrapPdfLine(title.trim() || 'Untitled poem', 42);
+  for (const line of titleLines) {
+    addText(line, 'F2', 20);
+    y -= 25;
+  }
+  y -= 12;
+
+  for (const sourceLine of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (!sourceLine) {
+      y -= 12;
+      continue;
+    }
+    for (const line of wrapPdfLine(sourceLine, 88)) {
+      if (y < 72) addPage();
+      addText(line, 'F1', 11);
+      y -= 15;
+    }
+  }
+
+  return assemblePdf(title, pages);
+}
+
+function buildBookPdf(bookTitle: string, poems: { title: string; text: string }[]) {
+  const pages: string[][] = [[]];
+  let y = 720;
+  const addPage = () => {
+    pages.push([]);
+    y = 720;
+  };
+  const addText = (value: string, font: 'F1' | 'F2', size: number) => {
+    pages[pages.length - 1].push(`BT /${font} ${size} Tf 72 ${y} Td <${winAnsiHex(value)}> Tj ET`);
+  };
+
+  poems.forEach((poem, poemIndex) => {
+    if (poemIndex > 0) addPage();
+    for (const line of wrapPdfLine(bookTitle.trim() || 'Untitled book', 88)) {
+      if (y < 72) addPage();
+      addText(line, 'F1', 9);
+      y -= 12;
+    }
+    y -= 12;
+    for (const line of wrapPdfLine(poem.title.trim() || 'Untitled poem', 42)) {
+      if (y < 72) addPage();
+      addText(line, 'F2', 20);
+      y -= 25;
+    }
+    y -= 12;
+    for (const sourceLine of poem.text.replace(/\r\n?/g, '\n').split('\n')) {
+      if (!sourceLine) {
+        y -= 12;
+        continue;
+      }
+      for (const line of wrapPdfLine(sourceLine, 88)) {
+        if (y < 72) addPage();
+        addText(line, 'F1', 11);
+        y -= 15;
+      }
+    }
+  });
+
+  return assemblePdf(bookTitle, pages);
+}
+
 export function serializePoemPdf(title: string, text: string) {
   return new Blob([buildPdf(title, text)], { type: 'application/pdf' });
+}
+
+export function serializeBookPdf(bookTitle: string, poems: { title: string; text: string }[]) {
+  if (!poems.length) throw new Error('Add at least one poem before downloading this book.');
+  return new Blob([buildBookPdf(bookTitle, poems)], { type: 'application/pdf' });
 }
 
 export function downloadPoemFile(fileName: string, content: string | Blob, format: DownloadablePoemFileFormat) {
