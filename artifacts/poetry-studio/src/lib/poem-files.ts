@@ -1,5 +1,5 @@
 import {
-  getEditorParagraphs, readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
+  getEditorParagraphs, markdownIndentColumns, readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
   type ExportInlineStyle, type ExportRun,
 } from './document-import';
 
@@ -372,9 +372,31 @@ export function poemTextToEditorHtml(text: string) {
     .join('');
 }
 
+function markdownPoemText(text: string, editorHtml?: string) {
+  if (!editorHtml) return text;
+  const paragraphs = getEditorParagraphs(editorHtml, text);
+  if (!paragraphs.some((paragraph) => paragraph.left || paragraph.firstLine)) return text;
+
+  const paragraphText = paragraphs.map((paragraph) => paragraph.runs.map((run) => run.text).join(''));
+  const normalizedText = text.replace(/\r\n?/g, '\n');
+  if (paragraphText.join('\n') !== normalizedText) return text;
+
+  return paragraphs.map((paragraph, index) => {
+    const content = paragraphText[index];
+    if (!content) return content;
+    const leftIndent = markdownIndentColumns(paragraph.left);
+    const firstLineIndent = markdownIndentColumns(paragraph.firstLine);
+    return content.split('\n').map((line, lineIndex) => {
+      if (!line) return line;
+      const indent = Math.max(0, leftIndent + (lineIndex === 0 ? firstLineIndent : 0));
+      return `${'\u00a0'.repeat(indent)}${line}`;
+    }).join('\n');
+  }).join('\n');
+}
+
 export function serializePoem(title: string, text: string, format: WritablePoemFileFormat, editorHtml?: string): string | Blob {
   if (format === 'txt') return `${title}\n\n${text}`;
-  if (format === 'md') return `# ${title}\n\n${text}`;
+  if (format === 'md') return `# ${title}\n\n${markdownPoemText(text, editorHtml)}`;
   if (format === 'rtf') return serializeRtf(title, text, editorHtml);
   if (format === 'docx') return serializeDocx(title, text, editorHtml);
   if (format === 'odt') return serializeOdt(title, text, editorHtml);

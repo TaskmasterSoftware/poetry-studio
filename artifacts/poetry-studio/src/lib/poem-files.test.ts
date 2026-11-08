@@ -491,6 +491,24 @@ test("exports PDF paragraph indents and leaves unindented paragraphs unchanged",
   assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 623 Td </);
 });
 
+test("exports Markdown paragraph indents without changing plain unindented text", () => {
+  enableXmlDom();
+  const text = "Left stanza\nFirst line\nWrapped line\n\nPlain";
+  const editorHtml = '<p style="margin-left:18pt">Left stanza</p>'
+    + '<p style="margin-left:18pt;text-indent:9pt">First line<br>Wrapped line</p>'
+    + '<p><br></p><p>Plain</p>';
+  const exported = serializePoem("Indented poem", text, "md", editorHtml);
+
+  assert.equal(
+    exported,
+    `# Indented poem\n\n${"\u00a0".repeat(6)}Left stanza\n${"\u00a0".repeat(9)}First line\n${"\u00a0".repeat(6)}Wrapped line\n\nPlain`,
+  );
+  assert.equal(
+    serializePoem("Plain poem", "First line\n\nSecond line", "md"),
+    "# Plain poem\n\nFirst line\n\nSecond line",
+  );
+});
+
 test("exports emphasis and paragraph layout to DOCX, RTF, and ODT", async () => {
   enableXmlDom();
   const title = "Night rain";

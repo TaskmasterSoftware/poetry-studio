@@ -137,6 +137,14 @@ function cssMeasureToTwips(value: string) {
   return Math.round(amount * pointsPerUnit[match[2].toLowerCase()] * 20);
 }
 
+export function markdownIndentColumns(value: string | undefined) {
+  if (!value) return 0;
+  const twips = cssMeasureToTwips(value);
+  if (twips === undefined) return 0;
+  // A non-breaking space is about 3pt at the editor's default font size.
+  return Math.max(-240, Math.min(240, Math.round(twips / 60)));
+}
+
 function firstFontName(value: string) {
   return value.split(",")[0].trim().replace(/^["']|["']$/g, "");
 }
