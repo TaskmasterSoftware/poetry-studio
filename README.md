@@ -2,6 +2,8 @@
 
 A browser-based, desktop-style writing workspace for poets.
 
+Public source: <https://github.com/TaskmasterSoftware/poetry-studio>.
+
 Poetry Studio includes rich-text editing, poem and book organisation, document
 import and export, pronunciation-based rhyme search, proofreading, scansion,
 poetic-form references, version comparisons, and searchable submission metadata.
