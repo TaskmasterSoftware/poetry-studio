@@ -381,6 +381,88 @@ test('confirms draft removal, switches safely, and keeps remaining drafts after 
   await expect(page.locator(editor)).toBeEmpty();
 });
 
+test('updates book poem counts after removal and keeps them accurate after reload', async ({ page }) => {
+  await page.goto('/');
+
+  const otherBook = await page.evaluate(() => {
+    const books = JSON.parse(localStorage.getItem('poetry-studio-books') || '[]') as Array<{
+      id: string;
+      title: string;
+    }>;
+    return books[0];
+  });
+  expect(otherBook).toBeTruthy();
+
+  const bookTitle = 'Counted poems';
+  const poemTitles = ['First counted poem', 'Last counted poem'];
+  const bundle = {
+    format: 'poetry-studio-book',
+    version: 1,
+    book: { title: bookTitle },
+    poems: poemTitles.map((title) => ({
+      title,
+      editorHtml: `<p>${title} manuscript</p>`,
+      source: null,
+    })),
+  };
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByTestId('button-import-book').click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
+    name: 'counted-poems.poetrybook',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(bundle)),
+  });
+
+  const importedBook = await page.evaluate((title) => {
+    const books = JSON.parse(localStorage.getItem('poetry-studio-books') || '[]') as Array<{
+      id: string;
+      title: string;
+    }>;
+    const drafts = JSON.parse(localStorage.getItem('poetry-studio-drafts') || '[]') as Array<{
+      id: string;
+      title: string;
+      bookId?: string;
+    }>;
+    const book = books.find((item) => item.title === title);
+    return book ? {
+      id: book.id,
+      poemIds: drafts.filter((draft) => draft.bookId === book.id).map((draft) => draft.id),
+    } : null;
+  }, bookTitle);
+  expect(importedBook?.poemIds).toHaveLength(2);
+
+  const targetShelf = page.getByTestId(`shelf-book-${importedBook!.id}`);
+  const otherShelf = page.getByTestId(`shelf-book-${otherBook.id}`);
+  await expect(targetShelf.locator('.book-count')).toHaveText('2 poems');
+  await expect(otherShelf.locator('.book-count')).toHaveText('1 poem');
+
+  await targetShelf.getByTestId(`button-select-poem-${importedBook!.poemIds[0]}`).click();
+  await page.getByTestId('button-remove-draft').click();
+  await page.getByTestId('button-confirm-remove-draft').click();
+  await expect(targetShelf.locator('.book-count')).toHaveText('1 poem');
+  await expect(otherShelf.locator('.book-count')).toHaveText('1 poem');
+  await expect(targetShelf.getByTestId(`shelf-poem-${importedBook!.poemIds[0]}`)).toHaveCount(0);
+
+  await page.reload();
+  const reopenedTargetShelf = page.getByTestId(`shelf-book-${importedBook!.id}`);
+  const reopenedOtherShelf = page.getByTestId(`shelf-book-${otherBook.id}`);
+  await expect(reopenedTargetShelf.locator('.book-count')).toHaveText('1 poem');
+  await expect(reopenedOtherShelf.locator('.book-count')).toHaveText('1 poem');
+
+  await reopenedTargetShelf.getByTestId(`button-select-poem-${importedBook!.poemIds[1]}`).click();
+  await page.getByTestId('button-remove-draft').click();
+  await page.getByTestId('button-confirm-remove-draft').click();
+  await expect(reopenedTargetShelf.locator('.book-count')).toHaveText('0 poems');
+  await expect(reopenedTargetShelf.locator('.book-empty-note')).toHaveText('A quiet page, waiting.');
+  await expect(reopenedOtherShelf.locator('.book-count')).toHaveText('1 poem');
+
+  await page.reload();
+  await expect(page.getByTestId(`shelf-book-${importedBook!.id}`).locator('.book-count')).toHaveText('0 poems');
+  await expect(page.getByTestId(`shelf-book-${importedBook!.id}`).locator('.book-empty-note')).toHaveText('A quiet page, waiting.');
+  await expect(page.getByTestId(`shelf-book-${otherBook.id}`).locator('.book-count')).toHaveText('1 poem');
+});
+
 test('keeps comparison highlights aligned when lines are inserted and removed', async ({ page }) => {
   await page.goto('/');
 
