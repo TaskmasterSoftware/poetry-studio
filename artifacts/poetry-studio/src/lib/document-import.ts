@@ -1001,6 +1001,133 @@ function importedParagraphs(paragraphs: ImportedContent[], title: string) {
   };
 }
 
+type WordNumberingLevel = { format: string; text: string; start: number };
+type WordNumberingInstance = { abstractId: string; starts: Map<number, number> };
+
+function boundedInteger(value: string, fallback: number) {
+  return /^-?\d{1,6}$/.test(value) ? Math.max(-100000, Math.min(100000, Number(value))) : fallback;
+}
+
+function wordNumberingDefinitions(numberingDocument?: XMLDocument) {
+  const abstractLevels = new Map<string, Map<number, WordNumberingLevel>>();
+  const instances = new Map<string, WordNumberingInstance>();
+  if (!numberingDocument) return { abstractLevels, instances };
+
+  for (const abstract of Array.from(numberingDocument.getElementsByTagNameNS(wordNamespace, "abstractNum"))) {
+    const abstractId = wordAttribute(abstract, "abstractNumId");
+    const levels = new Map<number, WordNumberingLevel>();
+    for (const level of Array.from(abstract.getElementsByTagNameNS(wordNamespace, "lvl"))) {
+      const index = boundedInteger(wordAttribute(level, "ilvl"), 0);
+      levels.set(index, {
+        format: wordAttribute(directChild(level, wordNamespace, "numFmt"), "val") || "decimal",
+        text: wordAttribute(directChild(level, wordNamespace, "lvlText"), "val"),
+        start: boundedInteger(wordAttribute(directChild(level, wordNamespace, "start"), "val"), 1),
+      });
+    }
+    if (abstractId) abstractLevels.set(abstractId, levels);
+  }
+
+  for (const instance of Array.from(numberingDocument.getElementsByTagNameNS(wordNamespace, "num"))) {
+    const numId = wordAttribute(instance, "numId");
+    const abstractId = wordAttribute(directChild(instance, wordNamespace, "abstractNumId"), "val");
+    if (!numId || !abstractId) continue;
+    const starts = new Map<number, number>();
+    for (const override of Array.from(instance.getElementsByTagNameNS(wordNamespace, "lvlOverride"))) {
+      const level = boundedInteger(wordAttribute(override, "ilvl"), 0);
+      const start = wordAttribute(directChild(override, wordNamespace, "startOverride"), "val");
+      if (start) starts.set(level, boundedInteger(start, 1));
+    }
+    instances.set(numId, { abstractId, starts });
+  }
+  return { abstractLevels, instances };
+}
+
+function alphabeticListNumber(value: number, uppercase: boolean) {
+  let number = Math.max(1, Math.floor(value));
+  let result = "";
+  while (number > 0) {
+    number -= 1;
+    result = String.fromCharCode(97 + number % 26) + result;
+    number = Math.floor(number / 26);
+  }
+  return uppercase ? result.toUpperCase() : result;
+}
+
+function romanListNumber(value: number, uppercase: boolean) {
+  let number = Math.max(1, Math.min(3999, Math.floor(value)));
+  let result = "";
+  for (const [amount, numeral] of [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]] as const) {
+    while (number >= amount) {
+      result += numeral;
+      number -= amount;
+    }
+  }
+  return uppercase ? result : result.toLowerCase();
+}
+
+function formattedListNumber(value: number, format: string) {
+  switch (format) {
+    case "lowerLetter":
+    case "lowerAlpha":
+      return alphabeticListNumber(value, false);
+    case "upperLetter":
+    case "upperAlpha":
+      return alphabeticListNumber(value, true);
+    case "lowerRoman":
+      return romanListNumber(value, false);
+    case "upperRoman":
+      return romanListNumber(value, true);
+    default:
+      return String(value);
+  }
+}
+
+function wordParagraphMarkers(paragraphs: Element[], archive: Record<string, Uint8Array>) {
+  const numberingDocument = archive["word/numbering.xml"]
+    ? parseXml(strFromU8(archive["word/numbering.xml"]), "Word numbering")
+    : undefined;
+  const { abstractLevels, instances } = wordNumberingDefinitions(numberingDocument);
+  const counters = new Map<string, number>();
+  const markers = new Map<Element, string>();
+  for (const paragraph of paragraphs) {
+    const properties = directChild(paragraph, wordNamespace, "pPr");
+    const numbering = directChild(properties, wordNamespace, "numPr");
+    const numId = wordAttribute(directChild(numbering, wordNamespace, "numId"), "val");
+    if (!numId || numId === "0") continue;
+    const level = Math.max(0, boundedInteger(wordAttribute(directChild(numbering, wordNamespace, "ilvl"), "val"), 0));
+    const instance = instances.get(numId);
+    const definition = instance && abstractLevels.get(instance.abstractId)?.get(level);
+    const format = definition?.format || "decimal";
+    const markerTemplate = definition?.text || (format === "bullet" ? "•" : `%${level + 1}.`);
+
+    for (let deeper = level + 1; deeper < 10; deeper += 1) counters.delete(`${numId}:${deeper}`);
+    const key = `${numId}:${level}`;
+    const start = instance?.starts.get(level) ?? definition?.start ?? 1;
+    const value = (counters.get(key) ?? start - 1) + 1;
+    counters.set(key, value);
+    const marker = markerTemplate.replace(/%([1-9])/g, (_match, levelDigit: string) => {
+      const referencedLevel = Number(levelDigit) - 1;
+      const referencedKey = `${numId}:${referencedLevel}`;
+      const referencedValue = counters.get(referencedKey)
+        ?? instance?.starts.get(referencedLevel)
+        ?? abstractLevels.get(instance?.abstractId || "")?.get(referencedLevel)?.start
+        ?? 1;
+      const referencedFormat = abstractLevels.get(instance?.abstractId || "")?.get(referencedLevel)?.format || "decimal";
+      return referencedFormat === "bullet"
+        ? abstractLevels.get(instance?.abstractId || "")?.get(referencedLevel)?.text || "•"
+        : formattedListNumber(referencedValue, referencedFormat);
+    });
+    markers.set(paragraph, marker || `${formattedListNumber(value, format)}.`);
+  }
+  return markers;
+}
+
+function prefixImportedMarker(content: ImportedContent, marker?: string): ImportedContent {
+  if (!marker) return content;
+  const prefix = `${marker} `;
+  return { text: prefix + content.text, html: escapeXml(prefix) + content.html };
+}
+
 export async function readDocx(file: File): Promise<{ title: string; text: string; editorHtml: string }> {
   try {
     const archive = unzipSync(new Uint8Array(await file.arrayBuffer()));
@@ -1011,15 +1138,21 @@ export async function readDocx(file: File): Promise<{ title: string; text: strin
     const styles = wordStyleMap(archive["word/styles.xml"]
       ? parseXml(strFromU8(archive["word/styles.xml"]), "Word styles")
       : undefined);
-    const paragraphs = Array.from(body.getElementsByTagNameNS(wordNamespace, "p")).map((paragraph) => {
+    const wordParagraphs = Array.from(body.getElementsByTagNameNS(wordNamespace, "p"));
+    const markers = wordParagraphMarkers(wordParagraphs, archive);
+    const paragraphs = wordParagraphs.map((paragraph) => {
       const content = Array.from(paragraph.childNodes)
         .filter((child) => !(child.nodeType === Node.ELEMENT_NODE
           && (child as Element).namespaceURI === wordNamespace
           && (child as Element).localName === "pPr"))
         .map((child) => wordInlineContent(child, styles));
-      return {
+      const importedContent = prefixImportedMarker({
         text: content.map((part) => part.text).join(""),
-        html: `<p${wordParagraphStyle(paragraph, styles)}>${content.map((part) => part.html).join("") || "<br>"}</p>`,
+        html: content.map((part) => part.html).join("") || "<br>",
+      }, markers.get(paragraph));
+      return {
+        text: importedContent.text,
+        html: `<p${wordParagraphStyle(paragraph, styles)}>${importedContent.html}</p>`,
       };
     });
     const imported = importedParagraphs(paragraphs, title);
@@ -1103,6 +1236,79 @@ function odtParagraphStyle(paragraph: Element, styles: Map<string, OdtStyle>) {
   return declarations.length ? ` style="${declarations.join(";")}"` : "";
 }
 
+type OdtListLevel = { ordered: boolean; format: string; prefix: string; suffix: string; bullet: string };
+
+function odtListStyles(documents: XMLDocument[]) {
+  const styles = new Map<string, Map<number, OdtListLevel>>();
+  for (const document of documents) {
+    for (const listStyle of Array.from(document.getElementsByTagNameNS(textNamespace, "list-style"))) {
+      const name = listStyle.getAttributeNS(styleNamespace, "name");
+      if (!name) continue;
+      const levels = new Map<number, OdtListLevel>();
+      for (const node of Array.from(listStyle.childNodes)) {
+        if (node.nodeType !== Node.ELEMENT_NODE || (node as Element).namespaceURI !== textNamespace) continue;
+        const element = node as Element;
+        if (element.localName !== "list-level-style-number" && element.localName !== "list-level-style-bullet") continue;
+        const level = Math.max(0, boundedInteger(element.getAttributeNS(textNamespace, "level") || "", 1) - 1);
+        levels.set(level, {
+          ordered: element.localName === "list-level-style-number",
+          format: element.getAttributeNS(styleNamespace, "num-format") || "1",
+          prefix: element.getAttributeNS(styleNamespace, "num-prefix") || "",
+          suffix: element.getAttributeNS(styleNamespace, "num-suffix") || ".",
+          bullet: element.getAttributeNS(textNamespace, "bullet-char") || "•",
+        });
+      }
+      styles.set(name, levels);
+    }
+  }
+  return styles;
+}
+
+function odtListMarkers(body: Element, documents: XMLDocument[]) {
+  const styles = odtListStyles(documents);
+  const markers = new Map<Element, string>();
+  const visitList = (list: Element, depth: number) => {
+    const styleName = list.getAttributeNS(textNamespace, "style-name");
+    const level = styles.get(styleName || "")?.get(depth);
+    const startValue = boundedInteger(list.getAttributeNS(textNamespace, "start-value") || "", 1);
+    let counter = startValue - 1;
+    for (const child of Array.from(list.childNodes)) {
+      if (child.nodeType !== Node.ELEMENT_NODE || (child as Element).namespaceURI !== textNamespace || (child as Element).localName !== "list-item") continue;
+      counter += 1;
+      const marker = level
+        ? level.ordered
+          ? `${level.prefix}${formattedListNumber(counter, level.format)}${level.suffix}`
+          : level.bullet
+        : `${counter}.`;
+      let hasParagraph = false;
+      const visitItem = (node: Node) => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const element = node as Element;
+        if (element.namespaceURI === textNamespace && (element.localName === "p" || element.localName === "h")) {
+          if (!hasParagraph) {
+            markers.set(element, marker);
+            hasParagraph = true;
+          }
+          return;
+        }
+        if (element.namespaceURI === textNamespace && element.localName === "list") {
+          visitList(element, depth + 1);
+          return;
+        }
+        for (const nested of Array.from(element.childNodes)) visitItem(nested);
+      };
+      for (const itemContent of Array.from(child.childNodes)) visitItem(itemContent);
+    }
+  };
+  for (const list of Array.from(body.getElementsByTagNameNS(textNamespace, "list"))) {
+    if (list.parentNode?.nodeType === Node.ELEMENT_NODE
+      && (list.parentNode as Element).namespaceURI === textNamespace
+      && (list.parentNode as Element).localName === "list-item") continue;
+    visitList(list, 0);
+  }
+  return markers;
+}
+
 function odtInlineContent(node: Node, styles: Map<string, OdtStyle>, inherited: InlineStyle = {}): ImportedContent {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent || "";
@@ -1143,13 +1349,18 @@ export async function readOdt(file: File): Promise<{ title: string; text: string
     const documents = [document];
     if (archive["styles.xml"]) documents.push(parseXml(strFromU8(archive["styles.xml"]), "OpenDocument styles"));
     const styles = odtStyleMap(documents);
+    const markers = odtListMarkers(body, documents);
     const paragraphs = Array.from(body.getElementsByTagNameNS(textNamespace, "*"))
       .filter((paragraph) => paragraph.localName === "p" || paragraph.localName === "h")
       .map((paragraph) => {
         const content = Array.from(paragraph.childNodes).map((child) => odtInlineContent(child, styles));
-        return {
+        const importedContent = prefixImportedMarker({
           text: content.map((part) => part.text).join(""),
-          html: `<p${odtParagraphStyle(paragraph, styles)}>${content.map((part) => part.html).join("") || "<br>"}</p>`,
+          html: content.map((part) => part.html).join("") || "<br>",
+        }, markers.get(paragraph));
+        return {
+          text: importedContent.text,
+          html: `<p${odtParagraphStyle(paragraph, styles)}>${importedContent.html}</p>`,
         };
       });
     const imported = importedParagraphs(paragraphs, title);

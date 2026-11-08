@@ -228,6 +228,73 @@ test("imports ODT emphasis and styled paragraphs while keeping stanzas and line 
   assert.match(poem.editorHtml || "", /<p><br><\/p>/);
 });
 
+test("keeps DOCX and ODT list markers as poem text and browser-draft content", async () => {
+  enableXmlDom();
+  const docxDocument = `<?xml version="1.0"?>
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Refrain</w:t></w:r></w:p>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Refrain</w:t></w:r></w:p>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Echo</w:t></w:r></w:p>
+      </w:body>
+    </w:document>`;
+  const docxNumbering = `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+    <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+  </w:numbering>`;
+  const docx = zipSync({
+    "word/document.xml": strToU8(docxDocument),
+    "word/numbering.xml": strToU8(docxNumbering),
+  });
+  const docxPoem = await readPoemFile(new File([docx], "refrain.docx"));
+  assert.equal(docxPoem.text, "1. Refrain\n2. Refrain\n• Echo");
+  assert.match(docxPoem.editorHtml || "", /<p>1\. Refrain<\/p>/);
+  assert.match(docxPoem.editorHtml || "", /<p>• Echo<\/p>/);
+  const docxDraft = JSON.parse(JSON.stringify({
+    id: "docx-list-draft", title: docxPoem.title, editorHtml: docxPoem.editorHtml, source: null,
+  }));
+  assert.equal(isBrowserPoemDraft(docxDraft), true);
+  assert.match(docxDraft.editorHtml, /1\. Refrain/);
+  assert.match(docxDraft.editorHtml, /• Echo/);
+
+  const odtContent = `<?xml version="1.0"?>
+    <office:document-content
+      xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+      xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+      xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0">
+      <office:automatic-styles>
+        <text:list-style style:name="Numbered">
+          <text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."/>
+        </text:list-style>
+        <text:list-style style:name="Bulleted">
+          <text:list-level-style-bullet text:level="1" text:bullet-char="•"/>
+        </text:list-style>
+      </office:automatic-styles>
+      <office:body><office:text>
+        <text:list text:style-name="Numbered">
+          <text:list-item><text:p>Refrain</text:p></text:list-item>
+          <text:list-item><text:p>Refrain</text:p></text:list-item>
+        </text:list>
+        <text:list text:style-name="Bulleted">
+          <text:list-item><text:p>Echo</text:p></text:list-item>
+        </text:list>
+      </office:text></office:body>
+    </office:document-content>`;
+  const odt = zipSync({ "content.xml": strToU8(odtContent) });
+  const odtPoem = await readPoemFile(new File([odt], "refrain.odt"));
+  assert.equal(odtPoem.text, "1. Refrain\n2. Refrain\n• Echo");
+  assert.match(odtPoem.editorHtml || "", /<p>1\. Refrain<\/p>/);
+  assert.match(odtPoem.editorHtml || "", /<p>• Echo<\/p>/);
+  const odtDraft = JSON.parse(JSON.stringify({
+    id: "odt-list-draft", title: odtPoem.title, editorHtml: odtPoem.editorHtml, source: null,
+  }));
+  assert.equal(isBrowserPoemDraft(odtDraft), true);
+  assert.match(odtDraft.editorHtml, /2\. Refrain/);
+  assert.match(odtDraft.editorHtml, /• Echo/);
+});
+
 test("imports RTF emphasis, paragraph alignment, line breaks, and blank stanzas", async () => {
   const source = String.raw`{\rtf1\ansi{\info{\title Night}}\b Night\b0\par{\qc The {\b bold} and {\i italic} {\ul under} {\strike struck}\line second line}\par\pard\par{\qr Right}\par}`;
   const poem = await readPoemFile(new File([source], "night.rtf"));
@@ -688,7 +755,7 @@ test("exports editable numbered and bulleted lists with nesting to office format
   assert.match(contentTypesXml, /word\/numbering\.xml/);
   const importedDocx = await readPoemFile(new File([docx], "list-poem.docx"));
   assert.equal(importedDocx.title, title);
-  assert.equal(importedDocx.text, text);
+  assert.equal(importedDocx.text, "Opening\n1. First numbered line\n• Nested bullet line\n2. Second numbered line\n• Final bullet line\nClosing");
 
   const rtf = serializePoem(title, text, "rtf", editorHtml) as Blob;
   const rtfText = await rtf.text();
@@ -710,7 +777,7 @@ test("exports editable numbered and bulleted lists with nesting to office format
   assert.match(odtXml, /text:bullet-char="•"/);
   const importedOdt = await readPoemFile(new File([odt], "list-poem.odt"));
   assert.equal(importedOdt.title, title);
-  assert.equal(importedOdt.text, text);
+  assert.equal(importedOdt.text, "Opening\n1. First numbered line\n• Nested bullet line\n2. Second numbered line\n• Final bullet line\nClosing");
 });
 
 test("preserves ordered-list starts and mid-list restarts in office exports", async () => {
