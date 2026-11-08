@@ -709,6 +709,7 @@ function buildBookPdf(
 ) {
   const layout = pdfLayout(options);
   const pages: string[][] = [[]];
+  const poemStartPages: number[] = [];
   let y = layout.height - layout.margin;
   const addPage = () => {
     pages.push([]);
@@ -720,6 +721,7 @@ function buildBookPdf(
 
   poems.forEach((poem, poemIndex) => {
     if (poemIndex > 0) addPage();
+    poemStartPages.push(pages.length);
     for (const line of wrapPdfLine(bookTitle.trim() || 'Untitled book', layout.bodyCharacters)) {
       if (y < layout.margin + 12) addPage();
       addText(line, 'F1', 9);
@@ -772,7 +774,52 @@ function buildBookPdf(
     }
   });
 
-  return assemblePdf(bookTitle, pages, options);
+  const contentsLineItems: { poemIndex: number; line: string; pageIndex: number; y: number; lastLine: boolean }[] = [];
+  let contentsPageIndex = 0;
+  let contentsY = layout.height - layout.margin;
+  const startContentsPage = () => {
+    contentsPageIndex += 1;
+    contentsY = layout.height - layout.margin;
+    contentsY -= 35;
+  };
+  contentsY -= 35;
+
+  poems.forEach((poem, poemIndex) => {
+    const title = poem.title.trim() || 'Untitled poem';
+    const titleLines = wrapPdfLine(title, Math.max(1, layout.bodyCharacters - 8));
+    titleLines.forEach((line, lineIndex) => {
+      if (contentsY < layout.margin) startContentsPage();
+      contentsLineItems.push({
+        poemIndex,
+        line,
+        pageIndex: contentsPageIndex,
+        y: contentsY,
+        lastLine: lineIndex === titleLines.length - 1,
+      });
+      contentsY -= 15;
+    });
+    contentsY -= 8;
+  });
+
+  const contentsPageCount = contentsPageIndex + 1;
+  const contentsPages: string[][] = Array.from({ length: contentsPageCount }, () => []);
+  contentsPages.forEach((commands, pageIndex) => {
+    const heading = pageIndex === 0 ? 'Contents' : 'Contents (continued)';
+    commands.push(`BT /F2 20 Tf ${layout.margin} ${layout.height - layout.margin} Td <${winAnsiHex(heading)}> Tj ET`);
+  });
+  contentsLineItems.forEach((item) => {
+    const commands = contentsPages[item.pageIndex];
+    commands.push(`BT /F1 11 Tf ${layout.margin} ${item.y} Td <${winAnsiHex(item.line)}> Tj ET`);
+    if (item.lastLine) {
+      const pageNumber = contentsPageCount + poemStartPages[item.poemIndex];
+      const pageNumberX = layout.width - layout.margin - approximatePdfTextWidth(String(pageNumber), 11);
+      commands.push(
+        `BT /F1 11 Tf ${pageNumberX} ${item.y} Td <${winAnsiHex(String(pageNumber))}> Tj ET`,
+      );
+    }
+  });
+
+  return assemblePdf(bookTitle, [...contentsPages, ...pages], options);
 }
 
 export function serializePoemPdf(

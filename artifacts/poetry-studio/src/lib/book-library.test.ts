@@ -17,6 +17,17 @@ Object.defineProperty(globalThis, "Node", {
   configurable: true,
 });
 
+function pdfPageText(pdf: string) {
+  const contentByObject = new Map<number, string>();
+  for (const match of pdf.matchAll(/(\d+) 0 obj\n<< \/Length \d+ >>\nstream\n([\s\S]*?)endstream\nendobj/g)) {
+    contentByObject.set(Number(match[1]), match[2]);
+  }
+  return Array.from(pdf.matchAll(/\/Type \/Page \/Parent 2 0 R [\s\S]*?\/Contents (\d+) 0 R >>/g), (match) => {
+    const stream = contentByObject.get(Number(match[1])) || "";
+    return Array.from(stream.matchAll(/<([0-9A-F]+)> Tj/g), (text) => Buffer.from(text[1], "hex").toString("latin1")).join("|");
+  });
+}
+
 test("migrates existing drafts into a default book and keeps valid book assignments", () => {
   const drafts: BrowserPoemDraft[] = [
     { id: "poem-1", title: "First", editorHtml: "<p>One</p>", source: null },
@@ -115,9 +126,43 @@ test("book PDF starts each poem on a separate page", async () => {
     { title: "First", text: "One line" },
     { title: "Second", text: "Another line" },
   ]).text();
+  const pages = pdfPageText(pdf);
 
-  assert.equal((pdf.match(/\/Type \/Page\b/g) || []).length, 2);
-  assert.match(pdf, /\/Count 2/);
+  assert.equal((pdf.match(/\/Type \/Page\b/g) || []).length, 3);
+  assert.match(pdf, /\/Count 3/);
+  assert.match(pages[0], /Contents\|First\|2\|Second\|3/);
+  assert.match(pages[1], /First/);
+  assert.match(pages[2], /Second/);
+});
+
+test("book contents page numbers account for poems that span multiple pages", async () => {
+  const longPoem = Array.from({ length: 70 }, (_, index) => `Line ${index + 1}`).join("\n");
+  const pdf = await serializeBookPdf("Night poems", [
+    { title: "Long poem", text: longPoem },
+    { title: "Short poem", text: "A brief ending" },
+  ]).text();
+  const pages = pdfPageText(pdf);
+
+  assert.match(pages[0], /Contents\|Long poem\|2\|Short poem\|4/);
+  assert.match(pages[1], /Long poem/);
+  assert.match(pages[2], /Line 70/);
+  assert.match(pages[3], /Short poem/);
+});
+
+test("book contents page numbers include every contents page", async () => {
+  const poems = Array.from({ length: 50 }, (_, index) => ({
+    title: `Poem ${index + 1}`,
+    text: `Line ${index + 1}`,
+  }));
+  const pdf = await serializeBookPdf("Night poems", poems).text();
+  const pages = pdfPageText(pdf);
+
+  assert.match(pages[0], /Contents/);
+  assert.match(pages[1], /Contents \(continued\)/);
+  assert.match(pages[0], /Poem 1\|3/);
+  assert.match(pages[1], /Poem 50\|52/);
+  assert.match(pages[2], /Poem 1/);
+  assert.match(pages[51], /Poem 50/);
 });
 
 test("book PDF preserves saved emphasis and alignment without styling plain entries", async () => {
@@ -134,7 +179,7 @@ test("book PDF preserves saved emphasis and alignment without styling plain entr
   assert.match(pdf, /BT \/F3 11 Tf/);
   assert.match(pdf, /BT \/F1 11 Tf 0 Tw 512\.5 644 Td <5269676874>/);
   assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 659 Td <506C61696E>/);
-  assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), 2);
+  assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), 3);
 });
 
 test("book HTML sanitizer removes active content and preserves supported style", () => {
