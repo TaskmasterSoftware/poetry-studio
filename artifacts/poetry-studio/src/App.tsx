@@ -1356,8 +1356,37 @@ function App() {
         <option value="letter">Letter · 8.5 × 11 in</option>
         <option value="a4">A4 · 210 × 297 mm</option>
         <option value="a5">A5 · 148 × 210 mm</option>
+        <option value="custom">Custom size</option>
       </select>
     </label>
+    {pdfExportOptions.pageSize === 'custom' && <>
+      <label>
+        <span className="field-label">Custom width (inches)</span>
+        <input
+          className="text-field"
+          type="number"
+          min="3"
+          max="36"
+          step="0.01"
+          value={pdfExportOptions.customWidthInches ?? defaultPdfExportOptions.customWidthInches}
+          onChange={(event) => setPdfExportOptions((previous) => ({ ...previous, customWidthInches: Number(event.target.value) }))}
+          data-testid="input-pdf-custom-width"
+        />
+      </label>
+      <label>
+        <span className="field-label">Custom height (inches)</span>
+        <input
+          className="text-field"
+          type="number"
+          min="3"
+          max="36"
+          step="0.01"
+          value={pdfExportOptions.customHeightInches ?? defaultPdfExportOptions.customHeightInches}
+          onChange={(event) => setPdfExportOptions((previous) => ({ ...previous, customHeightInches: Number(event.target.value) }))}
+          data-testid="input-pdf-custom-height"
+        />
+      </label>
+    </>}
     <label>
       <span className="field-label">Orientation</span>
       <select

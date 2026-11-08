@@ -56,7 +56,13 @@ test("validates saved filename and format metadata before restoring it", () => {
 test("restores only valid saved PDF print choices and defaults missing or invalid values", () => {
   assert.deepEqual(
     normalizePdfExportOptions({ pageSize: 'a4', margins: 'narrow', orientation: 'landscape' }),
-    { pageSize: 'a4', margins: 'narrow', orientation: 'landscape' },
+    {
+      pageSize: 'a4',
+      margins: 'narrow',
+      orientation: 'landscape',
+      customWidthInches: defaultPdfExportOptions.customWidthInches,
+      customHeightInches: defaultPdfExportOptions.customHeightInches,
+    },
   );
   assert.deepEqual(
     normalizePdfExportOptions({ pageSize: 'invalid', margins: 'wide', orientation: 'sideways' }),
@@ -64,6 +70,29 @@ test("restores only valid saved PDF print choices and defaults missing or invali
   );
   assert.deepEqual(normalizePdfExportOptions(null), defaultPdfExportOptions);
   assert.deepEqual(normalizePdfExportOptions({}), defaultPdfExportOptions);
+});
+
+test("restores valid custom PDF dimensions and defaults invalid dimensions", () => {
+  assert.deepEqual(
+    normalizePdfExportOptions({
+      pageSize: 'custom',
+      customWidthInches: 6.25,
+      customHeightInches: 9.5,
+      margins: 'narrow',
+      orientation: 'portrait',
+    }),
+    {
+      pageSize: 'custom',
+      customWidthInches: 6.25,
+      customHeightInches: 9.5,
+      margins: 'narrow',
+      orientation: 'portrait',
+    },
+  );
+  assert.deepEqual(
+    normalizePdfExportOptions({ pageSize: 'custom', customWidthInches: 2, customHeightInches: Infinity }),
+    { ...defaultPdfExportOptions, pageSize: 'custom' },
+  );
 });
 
 test("validates browser drafts and keeps imported source metadata attached", () => {
@@ -456,6 +485,53 @@ test("exports landscape poem and book PDFs with landscape wrapping and every pag
   for (const [, x, y] of bookPdf.matchAll(/BT \/F[12] \d+ Tf ([\d.]+) ([\d.]+) Td/g)) {
     assert.ok(Number(x) >= 72, "book text should respect the left margin in landscape");
     assert.ok(Number(y) <= 595.28 - 72, "book text should fit within the landscape page height");
+  }
+});
+
+test("preserves custom page dimensions on every poem and book page in both orientations", async () => {
+  const longPoem = Array.from({ length: 120 }, (_, index) => `A custom-size poem line ${index + 1}`).join("\n");
+  const customDimensions = {
+    pageSize: "custom" as const,
+    customWidthInches: 6.5,
+    customHeightInches: 9,
+    margins: "narrow" as const,
+  };
+  const exports = [
+    {
+      pdf: await serializePoemPdf("Custom portrait poem", longPoem, undefined, {
+        ...customDimensions,
+        orientation: "portrait",
+      }).text(),
+      pageBox: "468 648",
+    },
+    {
+      pdf: await serializePoemPdf("Custom landscape poem", longPoem, undefined, {
+        ...customDimensions,
+        orientation: "landscape",
+      }).text(),
+      pageBox: "648 468",
+    },
+    {
+      pdf: await serializeBookPdf("Custom portrait book", [
+        { title: "First", text: longPoem },
+        { title: "Second", text: "A short poem" },
+      ], { ...customDimensions, orientation: "portrait" }).text(),
+      pageBox: "468 648",
+    },
+    {
+      pdf: await serializeBookPdf("Custom landscape book", [
+        { title: "First", text: longPoem },
+        { title: "Second", text: "A short poem" },
+      ], { ...customDimensions, orientation: "landscape" }).text(),
+      pageBox: "648 468",
+    },
+  ];
+
+  for (const { pdf, pageBox } of exports) {
+    const expectedPageCount = pdf.split(`/MediaBox [0 0 ${pageBox}]`).length - 1;
+    assert.ok(expectedPageCount > 1, "the export should contain multiple pages");
+    assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), expectedPageCount);
+    assert.equal((pdf.match(/\/MediaBox \[0 0 /g) || []).length, expectedPageCount);
   }
 });
 

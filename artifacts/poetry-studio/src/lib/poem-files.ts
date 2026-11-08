@@ -480,20 +480,26 @@ function assemblePdf(title: string, pages: string[][], options: PdfExportOptions
   return pdf;
 }
 
-export type PdfPageSize = 'letter' | 'a4' | 'a5';
+export type PdfPageSize = 'letter' | 'a4' | 'a5' | 'custom';
 export type PdfMarginPreset = 'narrow' | 'standard' | 'wide';
 export type PdfOrientation = 'portrait' | 'landscape';
 export interface PdfExportOptions {
   pageSize: PdfPageSize;
   margins: PdfMarginPreset;
   orientation?: PdfOrientation;
+  customWidthInches?: number;
+  customHeightInches?: number;
 }
 
 export const defaultPdfExportOptions: PdfExportOptions = {
   pageSize: 'letter',
   margins: 'standard',
   orientation: 'portrait',
+  customWidthInches: 8.5,
+  customHeightInches: 11,
 };
+const defaultCustomPdfWidthInches = 8.5;
+const defaultCustomPdfHeightInches = 11;
 
 export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -501,8 +507,12 @@ export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
   }
 
   const saved = value as Record<string, unknown>;
+  const validDimension = (dimension: unknown, fallback: number) =>
+    typeof dimension === 'number' && Number.isFinite(dimension) && dimension >= 3 && dimension <= 36
+      ? dimension
+      : fallback;
   return {
-    pageSize: saved.pageSize === 'letter' || saved.pageSize === 'a4' || saved.pageSize === 'a5'
+    pageSize: saved.pageSize === 'letter' || saved.pageSize === 'a4' || saved.pageSize === 'a5' || saved.pageSize === 'custom'
       ? saved.pageSize
       : defaultPdfExportOptions.pageSize,
     margins: saved.margins === 'narrow' || saved.margins === 'standard' || saved.margins === 'wide'
@@ -511,10 +521,12 @@ export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
     orientation: saved.orientation === 'portrait' || saved.orientation === 'landscape'
       ? saved.orientation
       : defaultPdfExportOptions.orientation,
+    customWidthInches: validDimension(saved.customWidthInches, defaultCustomPdfWidthInches),
+    customHeightInches: validDimension(saved.customHeightInches, defaultCustomPdfHeightInches),
   };
 }
 
-const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> = {
+const pdfPageDimensions: Record<Exclude<PdfPageSize, 'custom'>, { width: number; height: number }> = {
   letter: { width: 612, height: 792 },
   a4: { width: 595.28, height: 841.89 },
   a5: { width: 419.53, height: 595.28 },
@@ -522,7 +534,16 @@ const pdfPageDimensions: Record<PdfPageSize, { width: number; height: number }> 
 const pdfMarginPoints: Record<PdfMarginPreset, number> = { narrow: 36, standard: 72, wide: 90 };
 
 function pdfDimensions(options: PdfExportOptions) {
-  const dimensions = pdfPageDimensions[options.pageSize];
+  const dimensions = options.pageSize === 'custom'
+    ? {
+      width: (options.customWidthInches && options.customWidthInches >= 3 && options.customWidthInches <= 36
+        ? options.customWidthInches
+        : defaultCustomPdfWidthInches) * 72,
+      height: (options.customHeightInches && options.customHeightInches >= 3 && options.customHeightInches <= 36
+        ? options.customHeightInches
+        : defaultCustomPdfHeightInches) * 72,
+    }
+    : pdfPageDimensions[options.pageSize];
   return options.orientation === 'landscape'
     ? { width: dimensions.height, height: dimensions.width }
     : dimensions;

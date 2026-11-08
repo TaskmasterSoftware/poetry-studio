@@ -1,6 +1,7 @@
 - [Per-user cloud storage](per-user-cloud-storage.md) — each app user must authorize their own provider account; do not use the workspace owner's shared connection.
 - [HTML parsing in tests](html-parsing-tests.md) — Node's XML DOM shim is not a browser HTML parser; account for lowercase tag names and missing convenience properties.
 - [PDF orientation defaults](pdf-orientation-defaults.md) — omitted orientation must keep legacy exports in portrait.
+- [Custom PDF page sizes](custom-pdf-page-sizes.md) — custom dimensions are entered in inches; keep all margin presets usable within the supported range.
 - [Browser draft concurrency](browser-draft-concurrency.md) — share manuscripts across tabs, but keep each tab’s active poem selection independent.
 - [Poetry form check confidence](poetry-form-check-confidence.md) — treat detected differences as advisory; syllable and rhyme heuristics need visible uncertainty and human review.
 - [Markdown indent representation](markdown-indent-representation.md) — use non-breaking spaces for exported visual indents; regular leading spaces can turn Markdown paragraphs into code blocks.
