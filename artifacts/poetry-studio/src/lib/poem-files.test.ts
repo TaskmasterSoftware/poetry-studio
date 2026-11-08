@@ -341,6 +341,14 @@ test("decodes escaped RTF bytes using the declared code page and keeps the defau
   assert.equal(shiftJis.text, "あ");
 });
 
+test("decodes escaped RTF bytes from OEM code pages 437 and 850", () => {
+  const cp437 = readRtf(String.raw`{\rtf1\ansi\ansicpg437 \'82\'9b}`);
+  const cp850 = readRtf(String.raw`{\rtf1\ansi\ansicpg850 \'82\'9b}`);
+
+  assert.equal(cp437.text, "é¢");
+  assert.equal(cp850.text, "éø");
+});
+
 test("imports RTF superscript and subscript without changing nearby text or emphasis", async () => {
   const source = String.raw`{\rtf1\ansi{\info{\title Chemistry}}\b Chemistry\b0\par H{\sub 2}O and x{\super 2} {\b bold \super 3\nosupersub text}\line next line}`;
   const poem = await readPoemFile(new File([source], "chemistry.rtf"));
