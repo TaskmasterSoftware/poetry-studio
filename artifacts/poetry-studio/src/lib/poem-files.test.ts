@@ -244,6 +244,22 @@ test("imports RTF emphasis, paragraph alignment, line breaks, and blank stanzas"
   assert.match(poem.editorHtml || "", /<p style="text-align:right">Right<\/p>/);
 });
 
+test("imports inline HTML emphasis as safe semantic formatting", async () => {
+  enableXmlDom();
+  const source = `<!doctype html><html><head><title>Styled poem</title></head><body><article>
+    <h1>Styled poem</h1>
+    <p><span style="font-weight:700;font-style:italic;text-decoration:underline;color:red;background:url(javascript:alert(1))" onclick="alert(1)">Kept</span>
+    <span style="font-weight:normal;font-style:normal;text-decoration:none;position:fixed"> plain</span></p>
+  </article></body></html>`;
+  const poem = await readPoemFile(new File([source], "styled.html"));
+
+  assert.equal(poem.title, "Styled poem");
+  assert.equal(poem.text.trim(), "Kept\n     plain");
+  assert.match(poem.editorHtml || "", /<strong><em><u><span>Kept<\/span><\/u><\/em><\/strong>/);
+  assert.match(poem.editorHtml || "", /<span> plain<\/span>/);
+  assert.doesNotMatch(poem.editorHtml || "", /onclick|javascript:|color:red|background:|position:fixed|<script/i);
+});
+
 test("decodes escaped RTF bytes using the declared code page and keeps the default", async () => {
   const source = String.raw`{\rtf1\ansi\ansicpg1250{\info{\title \'c8eský}}\b \'c8eský\b0\par P\'f8\'edli\'9a}`;
   const poem = await readPoemFile(new File([source], "cesky.rtf"));
@@ -387,6 +403,19 @@ test("HTML export keeps supported font family and point size while rejecting uns
 
   assert.match(html, /style="font-family:georgia, serif;font-size:14pt"/);
   assert.doesNotMatch(html, /MadeUp|expression|alert/i);
+});
+
+test("HTML save converts inline emphasis and removes arbitrary styles and event attributes", () => {
+  enableXmlDom();
+  const html = serializePoem(
+    "Styled poem",
+    "Styled text",
+    "html",
+    '<p><span style="font-weight:bold;font-style:oblique;text-decoration-line:underline;font-size:14pt;color:red" onmouseover="alert(1)">Styled</span></p>',
+  ) as string;
+
+  assert.match(html, /<strong><em><u><span style="font-size:14pt">Styled<\/span><\/u><\/em><\/strong>/);
+  assert.doesNotMatch(html, /onmouseover|alert\(1\)|color:red/);
 });
 
 test("exports valid paginated PDF with poem title, line breaks, stanza gaps, and readable punctuation", async () => {

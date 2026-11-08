@@ -227,11 +227,12 @@ const droppedHtmlTags = new Set([
 
 function safeEditorInlineStyle(value: string) {
   const declarations: string[] = [];
+  const emphasis = { bold: false, italic: false, underline: false };
   for (const declaration of value.split(';')) {
     const separator = declaration.indexOf(':');
     if (separator < 1) continue;
     const property = declaration.slice(0, separator).trim().toLowerCase();
-    const rawValue = declaration.slice(separator + 1).trim().toLowerCase();
+    const rawValue = declaration.slice(separator + 1).trim().toLowerCase().replace(/\s*!important$/, '').trim();
     if (property === 'font-family' && safeEditorFontFamilies.has(rawValue)) {
       declarations.push(`font-family:${rawValue}`);
     } else if (property === 'font-size') {
@@ -239,9 +240,15 @@ function safeEditorInlineStyle(value: string) {
       if (match && Number(match[1]) > 0 && Number(match[1]) <= 144) {
         declarations.push(`font-size:${Number(match[1])}${match[2]}`);
       }
+    } else if (property === 'font-weight') {
+      emphasis.bold ||= rawValue === 'bold' || rawValue === 'bolder' || (/^\d+$/.test(rawValue) && Number(rawValue) >= 600);
+    } else if (property === 'font-style') {
+      emphasis.italic ||= rawValue === 'italic' || rawValue === 'oblique';
+    } else if (property === 'text-decoration' || property === 'text-decoration-line') {
+      emphasis.underline ||= rawValue.split(/\s+/).includes('underline');
     }
   }
-  return declarations.join(';');
+  return { style: declarations.join(';'), ...emphasis };
 }
 
 function safeEditorNode(node: Node): string {
@@ -254,8 +261,12 @@ function safeEditorNode(node: Node): string {
   if (!safeEditorTags.has(tagName)) return children;
   const tag = tagName.toLowerCase();
   if (tag === 'br') return '<br>';
-  const style = tagName === 'SPAN' ? safeEditorInlineStyle(element.getAttribute('style') || '') : '';
-  return `<${tag}${style ? ` style="${escapeHtml(style)}"` : ''}>${children}</${tag}>`;
+  const inlineStyle = tagName === 'SPAN' ? safeEditorInlineStyle(element.getAttribute('style') || '') : null;
+  let safeHtml = `<${tag}${inlineStyle?.style ? ` style="${escapeHtml(inlineStyle.style)}"` : ''}>${children}</${tag}>`;
+  if (inlineStyle?.underline) safeHtml = `<u>${safeHtml}</u>`;
+  if (inlineStyle?.italic) safeHtml = `<em>${safeHtml}</em>`;
+  if (inlineStyle?.bold) safeHtml = `<strong>${safeHtml}</strong>`;
+  return safeHtml;
 }
 
 function sanitizeEditorHtml(source: string) {
@@ -296,15 +307,30 @@ function textFromHtmlNode(node: Node): string {
     : content;
 }
 
+function firstHtmlDescendant(node: Node, tagNames: ReadonlySet<string>): HTMLElement | null {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType !== Node.ELEMENT_NODE) continue;
+    const element = child as HTMLElement;
+    if (tagNames.has(element.tagName.toUpperCase())) return element;
+    const descendant = firstHtmlDescendant(element, tagNames);
+    if (descendant) return descendant;
+  }
+  return null;
+}
+
 function htmlToEditorContent(source: string) {
   const parsed = new DOMParser().parseFromString(source, 'text/html');
-  const root = parsed.querySelector('article, main') || parsed.body;
+  const body = parsed.body || firstHtmlDescendant(parsed, new Set(['BODY'])) || parsed.documentElement;
+  const root = firstHtmlDescendant(parsed, new Set(['ARTICLE', 'MAIN'])) || body;
   const contentRoot = root.cloneNode(true) as HTMLElement;
-  const heading = contentRoot.querySelector('h1, h2');
-  const title = (heading ? textFromHtmlNode(heading) : '').trim() || parsed.title.trim();
-  heading?.remove();
+  const heading = firstHtmlDescendant(contentRoot, new Set(['H1', 'H2']));
+  const documentTitle = parsed.title || firstHtmlDescendant(parsed, new Set(['TITLE']))?.textContent || '';
+  const title = (heading ? textFromHtmlNode(heading) : '').trim() || documentTitle.trim();
+  if (heading?.parentNode) heading.parentNode.removeChild(heading);
   const editorHtml = Array.from(contentRoot.childNodes).map(safeEditorNode).join('');
-  const safeContent = new DOMParser().parseFromString(editorHtml, 'text/html').body;
+  const safeDocument = new DOMParser().parseFromString(editorHtml, 'text/html');
+  const safeContent = safeDocument.body || safeDocument.documentElement;
+  if (!safeContent) return { title, text: '', editorHtml };
   const text = Array.from(safeContent.childNodes)
     .map(textFromHtmlNode)
     .join('')
