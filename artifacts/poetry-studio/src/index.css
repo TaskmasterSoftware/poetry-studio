@@ -221,6 +221,11 @@
 .form-check-controls > div { min-width:0; }
 .form-check-controls .field-label { margin-bottom:4px; }
 .form-check-controls strong { display:block; overflow-wrap:anywhere; color:#40584f; font:500 13px var(--app-font-serif); }
+.form-variant-control { display:grid; gap:5px; margin:0 0 10px; }
+.form-variant-control .field-label { margin:0; }
+.form-variant-control .empty-hint { margin:0; font-size:10px; line-height:1.4; }
+.form-variant-list { margin-top:6px; color:#768179; font-size:10px; line-height:1.45; }
+.form-variant-list b { color:#596c60; }
 .form-check-error { margin:0 0 12px; background:#f8e9e2; color:#9a5d4e; }
 .form-item-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .button.secondary { background:#f3f2eb; }
@@ -340,6 +345,8 @@
 .dark .switch-row,.dark .rhyme-row,.dark .form-item { border-color:#394c43; }
 .dark .form-check-controls { border-color:#3b5048; }
 .dark .form-check-controls strong { color:#dce4d8; }
+.dark .form-variant-list { color:#b0beb2; }
+.dark .form-variant-list b { color:#d7e0d4; }
 .dark .form-check-error { background:#44362d; color:#e1b591; }
 .dark .button.secondary { background:#293e34; }
 .dark .form-pattern { color:#b2c0b5; }

@@ -377,6 +377,7 @@ function App() {
   const [rhymeLoading, setRhymeLoading] = useState(false);
   const [dictionaryError, setDictionaryError] = useState('');
   const [formQuery, setFormQuery] = useState('');
+  const [formVariantSelection, setFormVariantSelection] = useState<{ draftId: string; formName: string; variantId: string } | null>(null);
   const [formCheckState, setFormCheckState] = useState<{ draftId: string; result: FormCheckResult } | null>(null);
   const [formCheckError, setFormCheckError] = useState('');
   const [isCheckingForm, setIsCheckingForm] = useState(false);
@@ -458,6 +459,10 @@ function App() {
   const activePoemMetadata = normalizePoemMetadata(activeDraft?.metadata);
   const formLabel = activePoemMetadata.form || 'Free verse';
   const intendedForm = findPoetryForm(activePoemMetadata.form);
+  const activeFormVariantId = formVariantSelection?.draftId === activeDraftId
+    && formVariantSelection.formName === intendedForm?.name
+    ? formVariantSelection.variantId
+    : '';
   const activeFormCheck = formCheckState?.draftId === activeDraftId ? formCheckState.result : null;
   const activeBookId = activeDraft?.bookId ?? books[0]?.id ?? '';
   const shelfBooks: ShelfBook[] = books.map((book) => ({
@@ -1401,7 +1406,21 @@ function App() {
       setToast(error instanceof Error ? error.message : 'Could not export this book.');
     }
   };
-  const checkPoemAgainstForm = async (form: FormEntry) => {
+  const chooseFormForCheck = (form: FormEntry) => {
+    const currentDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
+    if (!currentDraft) return;
+    updatePoemMetadata(currentDraft.id, {
+      ...normalizePoemMetadata(currentDraft.metadata),
+      form: form.name,
+    });
+    setFormVariantSelection({ draftId: currentDraft.id, formName: form.name, variantId: '' });
+    setFormCheckError('');
+  };
+  const checkPoemAgainstForm = async (form: FormEntry, variantId?: string) => {
+    if (form.variants?.length && !variantId) {
+      chooseFormForCheck(form);
+      return;
+    }
     const currentDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
     if (!currentDraft) return;
     updatePoemMetadata(currentDraft.id, {
@@ -1412,7 +1431,7 @@ function App() {
     setFormCheckError('');
     try {
       const poemText = editorRef.current?.innerText ?? cleanText(currentDraft.editorHtml);
-      const result = await analyzePoemForm(poemText, form);
+      const result = await analyzePoemForm(poemText, form, undefined, variantId);
       setFormCheckState({ draftId: currentDraft.id, result });
     } catch (error) {
       setFormCheckError(error instanceof Error ? error.message : 'Could not check this poem against the form.');
@@ -1428,6 +1447,7 @@ function App() {
         form: form.name,
       });
     }
+    setFormVariantSelection({ draftId: activeDraftId, formName: form.name, variantId: '' });
     setModal(null);
     setToast(`${form.name} reference loaded`);
   };
@@ -1702,6 +1722,27 @@ function App() {
               {selection && <div className="notice" style={{ marginTop: 12 }}><Feather/>Using your selection: “{selection.slice(0, 38)}{selection.length > 38 ? '…' : ''}”</div>}
             </div>}
             {activeTool === 'forms' && <div className="panel-card">
+              {intendedForm?.variants?.length ? <div className="form-variant-control">
+                <label className="field-label" htmlFor="form-variant">Form variant</label>
+                <select
+                  id="form-variant"
+                  className="text-field"
+                  value={activeFormVariantId}
+                  onChange={(event) => setFormVariantSelection({
+                    draftId: activeDraftId,
+                    formName: intendedForm.name,
+                    variantId: event.target.value,
+                  })}
+                  data-testid="select-form-variant"
+                >
+                  <option value="">Choose a variant before checking</option>
+                  {intendedForm.variants.map((variant) => <option value={variant.id} key={variant.id}>{variant.label}</option>)}
+                </select>
+                <div className="empty-hint">
+                  {intendedForm.variants.find((variant) => variant.id === activeFormVariantId)?.description
+                    ?? 'Choose the convention you are writing in; its structural expectations will be used in the check.'}
+                </div>
+              </div> : null}
               <div className="form-check-controls">
                 <div>
                   <span className="field-label">Intended form</span>
@@ -1710,8 +1751,8 @@ function App() {
                 <button
                   className="button small"
                   type="button"
-                  disabled={!intendedForm || isCheckingForm}
-                  onClick={() => { if (intendedForm) void checkPoemAgainstForm(intendedForm); }}
+                  disabled={!intendedForm || isCheckingForm || Boolean(intendedForm.variants?.length && !activeFormVariantId)}
+                  onClick={() => { if (intendedForm) void checkPoemAgainstForm(intendedForm, activeFormVariantId || undefined); }}
                   data-testid="button-check-intended-form"
                 >{isCheckingForm ? 'Checking…' : 'Check poem'}</button>
               </div>
@@ -1721,7 +1762,7 @@ function App() {
                 checking={isCheckingForm}
                 onRecheck={() => {
                   const form = findPoetryForm(activeFormCheck.formName);
-                  if (form) void checkPoemAgainstForm(form);
+                  if (form) void checkPoemAgainstForm(form, activeFormCheck.variantId);
                 }}
               />}
               <label className="field-label" htmlFor="form-search">Browse forms</label>
@@ -1731,12 +1772,21 @@ function App() {
                 <div className="rhyme-kind" style={{ marginTop: 4 }}>{form.structure}</div>
                 <p>{form.description}</p>
                 <div className="form-pattern"><b>Pattern:</b> {form.example}</div>
+                {form.variants?.length ? <div className="form-variant-list">
+                  <b>Variants:</b> {form.variants.map((variant) => variant.label).join(' · ')}
+                </div> : null}
                 <a className="form-example-link" href={form.exampleUrl} target="_blank" rel="noreferrer" aria-label={`Read example: ${form.exampleTitle}`}>
                   Example: {form.exampleTitle}
                 </a>
                 <div className="form-item-actions">
                   <button className="button small" onClick={() => applyForm(form)} data-testid={`button-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Use as reference</button>
-                  <button className="button small secondary" type="button" disabled={isCheckingForm} onClick={() => void checkPoemAgainstForm(form)} data-testid={`button-check-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Check poem</button>
+                  <button
+                    className="button small secondary"
+                    type="button"
+                    disabled={isCheckingForm}
+                    onClick={() => form.variants?.length ? chooseFormForCheck(form) : void checkPoemAgainstForm(form)}
+                    data-testid={`button-check-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}
+                  >{form.variants?.length ? 'Choose variant' : 'Check poem'}</button>
                 </div>
               </div>)}</div>
             </div>}

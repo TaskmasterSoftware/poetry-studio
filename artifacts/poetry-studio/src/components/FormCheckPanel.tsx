@@ -31,7 +31,7 @@ export default function FormCheckPanel({ result, checking, onRecheck }: FormChec
       <div className="form-check-head">
         <div>
           <div className="form-check-eyebrow">Form check</div>
-          <h3>{result.formName}</h3>
+          <h3>{result.formName}{result.variantName ? ` · ${result.variantName}` : ''}</h3>
           <p>{result.lineCount} lines · {result.stanzaCount} {result.stanzaCount === 1 ? 'stanza' : 'stanzas'}</p>
         </div>
         <button
@@ -56,6 +56,19 @@ export default function FormCheckPanel({ result, checking, onRecheck }: FormChec
           </div>
         ))}
       </div>
+
+      {result.lineWords.length > 0 && <div className="form-check-details">
+        <h4>Words by line</h4>
+        <div className="form-line-syllables">
+          {result.lineWords.map((line) => {
+            const differs = line.expected !== undefined && line.actual !== line.expected;
+            return <div className={`form-line-count${differs ? ' is-warning' : ''}`} key={line.line} data-testid={`form-word-check-${line.line}`}>
+              <span>Line {line.line}</span>
+              <strong>{line.actual}{line.expected !== undefined && <small> / {line.expected}</small>}</strong>
+            </div>;
+          })}
+        </div>
+      </div>}
 
       {result.lineSyllables.length > 0 && <div className="form-check-details">
         <h4>Syllables by line</h4>

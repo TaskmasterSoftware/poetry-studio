@@ -2,16 +2,27 @@ export type FormCheckSpec = {
   lineCount?: number;
   minimumLineCount?: number;
   lineCountMultipleOf?: number;
+  wordPattern?: number[];
+  repeatWordPattern?: boolean;
   syllablePattern?: number[];
   repeatSyllablePattern?: boolean;
   stanzaPattern?: number[];
   repeatStanzaPattern?: boolean;
   rhymePatterns?: string[][];
   repeatRhymePattern?: boolean;
+  rhymeLinks?: Array<[number, number]>;
   repeatedLines?: Array<[number, number]>;
   repeatedLinesAcrossStanzas?: { sourceOffsets: number[]; targetOffsets: number[] };
   cascadeOpeningLines?: boolean;
   rhymeWithAnchorEveryNthLine?: { anchorLine: number; every: number; alsoLines?: number[] };
+  notes?: string[];
+};
+
+export type FormVariant = {
+  id: string;
+  label: string;
+  description: string;
+  check: FormCheckSpec;
   notes?: string[];
 };
 
@@ -24,6 +35,7 @@ export type FormEntry = {
   exampleTitle: string;
   exampleUrl: string;
   check?: FormCheckSpec;
+  variants?: FormVariant[];
 };
 
 // Keep exampleTitle and exampleUrl required so every form has a reference.
@@ -89,7 +101,22 @@ export const forms: FormEntry[] = [
     example: 'five matching stanzas · envoy',
     exampleTitle: '“To May, the Prince of Months” and other examples',
     exampleUrl: 'https://www.classicalpoets.org/chant-royal',
-    check: { notes: ['Chant royal variants differ in stanza length and refrain; review the chosen variant manually.'] },
+    variants: [
+      {
+        id: 'eleven-line-stanzas',
+        label: 'Traditional · 11-line stanzas + envoy',
+        description: 'Five 11-line stanzas followed by a 5-line envoy.',
+        check: { lineCount: 60, stanzaPattern: [11, 11, 11, 11, 11, 5] },
+        notes: ['Rhyme scheme and refrain conventions vary and need human review.'],
+      },
+      {
+        id: 'other-tradition',
+        label: 'Other chant royal convention',
+        description: 'Keep line and stanza structure open for another tradition.',
+        check: {},
+        notes: ['Stanza length, envoy, rhyme, and refrain rules depend on the chosen convention and need human review.'],
+      },
+    ],
   },
   {
     name: 'Cinquain',
@@ -99,7 +126,22 @@ export const forms: FormEntry[] = [
     example: '2 · 4 · 6 · 8 · 2',
     exampleTitle: 'Adelaide Crapsey’s “Verse”',
     exampleUrl: 'https://www.gutenberg.org/cache/epub/63010/pg63010.html',
-    check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [2, 4, 6, 8, 2], notes: ['This checks the American syllabic cinquain; other cinquain forms differ.'] },
+    variants: [
+      {
+        id: 'american-syllabic',
+        label: 'American syllabic',
+        description: 'Five lines with 2 / 4 / 6 / 8 / 2 syllables.',
+        check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [2, 4, 6, 8, 2] },
+        notes: ['Syllable counts are estimates; stress and the poem’s movement still need a human reading.'],
+      },
+      {
+        id: 'didactic',
+        label: 'Didactic',
+        description: 'Five lines with 1 / 2 / 3 / 4 / 1 words.',
+        check: { lineCount: 5, stanzaPattern: [5], wordPattern: [1, 2, 3, 4, 1] },
+        notes: ['The expected word pattern is checked; the line-by-line topic or phrase roles need human review.'],
+      },
+    ],
   },
   {
     name: 'Clerihew',
@@ -117,7 +159,30 @@ export const forms: FormEntry[] = [
     example: 'varies by regional and stanza form',
     exampleTitle: '“Coplas por la muerte de su padre” by Jorge Manrique',
     exampleUrl: 'https://www.uv.es/ivorra/Literatura/Coplas.htm',
-    check: { notes: ['Copla patterns vary by tradition; this checker does not choose a regional variant.'] },
+    variants: [
+      {
+        id: 'manriquena',
+        label: 'Manriqueña · pie quebrado',
+        description: 'Twelve-line stanzas in two six-line units, alternating 8 / 8 / 4 syllables.',
+        check: {
+          lineCountMultipleOf: 12,
+          stanzaPattern: [12],
+          repeatStanzaPattern: true,
+          syllablePattern: [8, 8, 4, 8, 8, 4, 8, 8, 4, 8, 8, 4],
+          repeatSyllablePattern: true,
+          rhymePatterns: [['A', 'B', 'C', 'A', 'B', 'C', 'D', 'E', 'F', 'D', 'E', 'F']],
+          repeatRhymePattern: true,
+        },
+        notes: ['The stanza rhyme and short-line syllable counts are approximate in English; Spanish stress and assonance rules are not assessed.'],
+      },
+      {
+        id: 'other-tradition',
+        label: 'Other or regional tradition',
+        description: 'Keep the structure open and review the chosen tradition manually.',
+        check: {},
+        notes: ['Copla structures vary by region and tradition; line, syllable, stanza, and rhyme rules need human review.'],
+      },
+    ],
   },
   {
     name: 'Elegy',
@@ -187,7 +252,22 @@ export const forms: FormEntry[] = [
     example: 'short · long · short',
     exampleTitle: '“Haiku” by Etheridge Knight',
     exampleUrl: 'https://www.poetryfoundation.org/poems/47593/haiku',
-    check: { lineCount: 3, stanzaPattern: [3], syllablePattern: [5, 7, 5], notes: ['English syllable counts are estimates; many haiku do not use 5 / 7 / 5.'] },
+    variants: [
+      {
+        id: 'english-575',
+        label: 'English 5 / 7 / 5',
+        description: 'Three lines in one stanza with an estimated 5 / 7 / 5 syllables.',
+        check: { lineCount: 3, stanzaPattern: [3], syllablePattern: [5, 7, 5] },
+        notes: ['English syllable counts are estimates; this pattern is one English convention, not a rule for all haiku.'],
+      },
+      {
+        id: 'open-three-line',
+        label: 'Open three-line haiku',
+        description: 'Check three lines only; syllable count is not prescribed.',
+        check: { lineCount: 3, stanzaPattern: [3] },
+        notes: ['Seasonal reference, a cut or turn, and the image relationship need human review.'],
+      },
+    ],
   },
   {
     name: 'Limerick',
@@ -294,7 +374,53 @@ export const forms: FormEntry[] = [
     example: 'ABAB CDCD EFEF GG',
     exampleTitle: '“Sonnet 18” by William Shakespeare',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45087/sonnet-18-shall-i-compare-thee-to-a-summers-day',
-    check: { lineCount: 14, stanzaPattern: [14], notes: ['Sonnet rhyme schemes vary by tradition; meter and the turn in thought are not graded.'] },
+    variants: [
+      {
+        id: 'shakespearean',
+        label: 'Shakespearean',
+        description: 'Three quatrains and a couplet · ABAB CDCD EFEF GG.',
+        check: {
+          lineCount: 14,
+          stanzaPattern: [4, 4, 4, 2],
+          rhymePatterns: [['A', 'B', 'A', 'B'], ['C', 'D', 'C', 'D'], ['E', 'F', 'E', 'F'], ['G', 'G']],
+        },
+        notes: ['Iambic pentameter, substitutions, and the turn in thought need human review.'],
+      },
+      {
+        id: 'petrarchan-cdecde',
+        label: 'Petrarchan · CDECDE sestet',
+        description: 'An eight-line octave and six-line sestet · ABBAABBA CDECDE.',
+        check: {
+          lineCount: 14,
+          stanzaPattern: [8, 6],
+          rhymePatterns: [['A', 'B', 'B', 'A', 'A', 'B', 'B', 'A'], ['C', 'D', 'E', 'C', 'D', 'E']],
+        },
+        notes: ['Petrarchan sestets have other accepted rhyme patterns; meter and the turn in thought need human review.'],
+      },
+      {
+        id: 'petrarchan-cdcdcd',
+        label: 'Petrarchan · CDCDCD sestet',
+        description: 'An eight-line octave and six-line sestet · ABBAABBA CDCDCD.',
+        check: {
+          lineCount: 14,
+          stanzaPattern: [8, 6],
+          rhymePatterns: [['A', 'B', 'B', 'A', 'A', 'B', 'B', 'A'], ['C', 'D', 'C', 'D', 'C', 'D']],
+        },
+        notes: ['Petrarchan sestets have other accepted rhyme patterns; meter and the turn in thought need human review.'],
+      },
+      {
+        id: 'spenserian',
+        label: 'Spenserian',
+        description: 'Three linked quatrains and a couplet · ABAB BCBC CDCD EE.',
+        check: {
+          lineCount: 14,
+          stanzaPattern: [4, 4, 4, 2],
+          rhymePatterns: [['A', 'B', 'A', 'B'], ['B', 'C', 'B', 'C'], ['C', 'D', 'C', 'D'], ['E', 'E']],
+          rhymeLinks: [[2, 5], [2, 7], [6, 9], [6, 11]] as [number, number][],
+        },
+        notes: ['Iambic pentameter, substitutions, and the turn in thought need human review.'],
+      },
+    ],
   },
   {
     name: 'Tanka',
@@ -303,7 +429,22 @@ export const forms: FormEntry[] = [
     example: 'short · long · short · long · long',
     exampleTitle: '“Four Tanka” translated by Yuki Tanaka',
     exampleUrl: 'https://www.poetryfoundation.org/poetrymagazine/poems/1682788/four-tanka',
-    check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [5, 7, 5, 7, 7], notes: ['English syllable counts are estimates; translations and modern tanka vary.'] },
+    variants: [
+      {
+        id: 'english-syllabic',
+        label: 'English syllabic',
+        description: 'Five lines with an estimated 5 / 7 / 5 / 7 / 7 syllables.',
+        check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [5, 7, 5, 7, 7] },
+        notes: ['English syllable counts are estimates; Japanese sound units do not map directly to English syllables.'],
+      },
+      {
+        id: 'open-five-line',
+        label: 'Open five-line tanka',
+        description: 'Check five lines only; syllable counts are not prescribed.',
+        check: { lineCount: 5, stanzaPattern: [5] },
+        notes: ['The poem’s turn, emotional movement, and relationship between its parts need human review.'],
+      },
+    ],
   },
   {
     name: 'Tercet',
@@ -367,7 +508,8 @@ export function searchPoetryForms(query: string): FormEntry[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return forms;
   return forms.filter((form) =>
-    [form.name, ...(form.aliases ?? []), form.structure, form.description, form.exampleTitle]
+    [form.name, ...(form.aliases ?? []), form.structure, form.description, form.exampleTitle,
+      ...(form.variants ?? []).flatMap((variant) => [variant.label, variant.description])]
       .join(' ')
       .toLocaleLowerCase()
       .includes(normalizedQuery),

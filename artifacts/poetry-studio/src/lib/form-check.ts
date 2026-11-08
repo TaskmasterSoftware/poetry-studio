@@ -16,6 +16,12 @@ export type FormLineSyllables = {
   estimatedWords: string[];
 };
 
+export type FormLineWords = {
+  line: number;
+  actual: number;
+  expected?: number;
+};
+
 export type FormRhymeCheck = {
   stanza: number;
   expected: string;
@@ -25,9 +31,12 @@ export type FormRhymeCheck = {
 
 export type FormCheckResult = {
   formName: string;
+  variantId?: string;
+  variantName?: string;
   lineCount: number;
   stanzaCount: number;
   checks: FormCheckItem[];
+  lineWords: FormLineWords[];
   lineSyllables: FormLineSyllables[];
   rhymeChecks: FormRhymeCheck[];
   notes: string[];
@@ -114,22 +123,54 @@ export async function analyzePoemForm(
   text: string,
   form: FormEntry,
   lookups: FormCheckLookups = defaultLookups,
+  variantId?: string,
 ): Promise<FormCheckResult> {
   const stanzas = splitPoemStanzas(text);
   const lines = stanzas.flat();
-  const spec: FormCheckSpec = form.check ?? {};
+  const variant = variantId ? form.variants?.find((item) => item.id === variantId) : undefined;
+  if (variantId && !variant) {
+    throw new Error(`The selected ${form.name} variant is not available.`);
+  }
+  const resultVariant = variant ? { variantId: variant.id, variantName: variant.label } : {};
+  const spec: FormCheckSpec = variant
+    ? {
+      ...form.check,
+      ...variant.check,
+      notes: [...(form.check?.notes ?? []), ...(variant.check.notes ?? [])],
+    }
+    : form.check ?? {};
   const checks: FormCheckItem[] = [];
+  const lineWords: FormLineWords[] = [];
   const lineSyllables: FormLineSyllables[] = [];
   const rhymeChecks: FormRhymeCheck[] = [];
   const notes = [
     'Blank lines mark stanza breaks. Syllable counts use a pronunciation dictionary with rough estimates for unknown words.',
     'Rhyme checks compare dictionary pronunciations for exact end rhymes; slant rhyme, dialect, meter, and deliberate variation may be missed.',
     ...(spec.notes ?? []),
+    ...(variant?.notes ?? []),
   ];
+
+  if (form.variants?.length && !variant) {
+    checks.push({
+      label: 'Form variant',
+      status: 'info',
+      detail: 'Choose a form variant before checking its structure.',
+    });
+    return {
+      formName: form.name,
+      lineCount: lines.length,
+      stanzaCount: stanzas.length,
+      checks,
+      lineWords,
+      lineSyllables,
+      rhymeChecks,
+      notes,
+    };
+  }
 
   if (!lines.length) {
     checks.push({ label: 'Poem', status: 'info', detail: 'Add poem lines to run the form check.' });
-    return { formName: form.name, lineCount: 0, stanzaCount: 0, checks, lineSyllables, rhymeChecks, notes };
+    return { formName: form.name, ...resultVariant, lineCount: 0, stanzaCount: 0, checks, lineWords, lineSyllables, rhymeChecks, notes };
   }
 
   if (spec.lineCount !== undefined) {
@@ -168,6 +209,28 @@ export async function analyzePoemForm(
       matches,
       `Stanza line counts: ${actualShape}.`,
       `Stanza line counts are ${actualShape}; expected ${expectedShape}.`,
+    );
+  }
+
+  if (spec.wordPattern?.length) {
+    const wordCounts = lines.map((line, index) => ({
+      line: index + 1,
+      actual: line.trim().split(/\s+/).filter(Boolean).length,
+      expected: spec.repeatWordPattern
+        ? spec.wordPattern![index % spec.wordPattern!.length]
+        : spec.wordPattern![index],
+    }));
+    lineWords.push(...wordCounts);
+    const expectedLineCount = spec.repeatWordPattern ? lines.length : spec.wordPattern.length;
+    const matches = lines.length === expectedLineCount
+      && wordCounts.every((result) => result.expected !== undefined && result.actual === result.expected);
+    const matched = wordCounts.filter((result) => result.expected !== undefined && result.actual === result.expected).length;
+    addFinding(
+      checks,
+      'Words per line',
+      matches,
+      `All ${lines.length} line word counts match the configured pattern.`,
+      `${matched} of ${wordCounts.length} line word counts match the configured pattern.`,
     );
   }
 
@@ -227,6 +290,28 @@ export async function analyzePoemForm(
             : `Detected ${actual.join('')}; expected rhyme pattern ${rhymePatternText(expected)}.`,
       });
     }
+  }
+
+  if (spec.rhymeLinks?.length) {
+    const linkKeys = await Promise.all(spec.rhymeLinks.map(async ([first, second]) => {
+      const [firstKey, secondKey] = await Promise.all([
+        lookups.getRhymeKey(lastWord(lines[first - 1] ?? '')),
+        lookups.getRhymeKey(lastWord(lines[second - 1] ?? '')),
+      ]);
+      return { first, second, firstKey, secondKey };
+    }));
+    const unknown = linkKeys.some(({ firstKey, secondKey }) => !firstKey || !secondKey);
+    const matches = linkKeys.every(({ firstKey, secondKey }) => Boolean(firstKey) && firstKey === secondKey);
+    const status: FormCheckStatus = unknown ? 'info' : matches ? 'match' : 'warning';
+    checks.push({
+      label: 'Linked stanza rhymes',
+      status,
+      detail: unknown
+        ? 'Some linked end words are missing from the pronunciation dictionary.'
+        : matches
+          ? 'The expected rhyme sounds carry across stanza boundaries.'
+          : 'Some rhyme sounds should carry from one stanza into the next.',
+    });
   }
 
   if (spec.rhymeWithAnchorEveryNthLine) {
@@ -307,5 +392,5 @@ export async function analyzePoemForm(
     });
   }
 
-  return { formName: form.name, lineCount: lines.length, stanzaCount: stanzas.length, checks, lineSyllables, rhymeChecks, notes };
+  return { formName: form.name, ...resultVariant, lineCount: lines.length, stanzaCount: stanzas.length, checks, lineWords, lineSyllables, rhymeChecks, notes };
 }
