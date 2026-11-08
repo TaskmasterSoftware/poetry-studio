@@ -5,3 +5,4 @@
 - [Browser draft concurrency](browser-draft-concurrency.md) — share manuscripts across tabs, but keep each tab’s active poem selection independent.
 - [Poetry form check confidence](poetry-form-check-confidence.md) — treat detected differences as advisory; syllable and rhyme heuristics need visible uncertainty and human review.
 - [Markdown indent representation](markdown-indent-representation.md) — use non-breaking spaces for exported visual indents; regular leading spaces can turn Markdown paragraphs into code blocks.
+- [Scansion processing boundary](scansion-processing-boundary.md) — keep poem analysis on-device and Calliope-TS scope English-only unless the user approves a change.
