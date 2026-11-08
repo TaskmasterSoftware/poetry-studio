@@ -19,7 +19,7 @@ test('restores PDF print choices after reload in poem and book export dialogs', 
   await page.locator(orientation).selectOption('landscape');
 
   await expect.poll(() => page.evaluate(() => localStorage.getItem('poetry-studio-pdf-export-options'))).toBe(
-    JSON.stringify({ pageSize: 'a5', margins: 'wide', orientation: 'landscape' }),
+    JSON.stringify({ pageSize: 'a5', margins: 'wide', orientation: 'landscape', customWidthInches: 8.5, customHeightInches: 11 }),
   );
 
   await page.reload();
@@ -45,6 +45,42 @@ test('restores PDF print choices after reload in poem and book export dialogs', 
   await page.evaluate(() => localStorage.removeItem('poetry-studio-pdf-export-options'));
   await page.reload();
   await page.getByTestId('button-export').click();
+  await expectDefaultPdfOptions(page);
+});
+
+test('resets poem and book PDF choices to standard defaults and saves them', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByTestId('button-export').click();
+  await page.locator(pageSize).selectOption('custom');
+  await page.getByTestId('input-pdf-custom-width').fill('10.5');
+  await page.getByTestId('input-pdf-custom-height').fill('14');
+  await page.locator(margins).selectOption('wide');
+  await page.locator(orientation).selectOption('landscape');
+  await page.getByTestId('button-reset-pdf-options').click();
+  await expectDefaultPdfOptions(page);
+  await expect(page.getByTestId('input-pdf-custom-width')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('poetry-studio-pdf-export-options'))).toBe(
+    JSON.stringify({ pageSize: 'letter', margins: 'standard', orientation: 'portrait', customWidthInches: 8.5, customHeightInches: 11 }),
+  );
+
+  await page.reload();
+  await page.getByTestId('button-export').click();
+  await expectDefaultPdfOptions(page);
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+
+  await page.locator('[data-testid^="button-export-book-"]').first().click();
+  await page.locator(pageSize).selectOption('a4');
+  await page.locator(margins).selectOption('narrow');
+  await page.locator(orientation).selectOption('landscape');
+  await page.getByTestId('button-reset-pdf-options').click();
+  await expectDefaultPdfOptions(page);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('poetry-studio-pdf-export-options'))).toBe(
+    JSON.stringify({ pageSize: 'letter', margins: 'standard', orientation: 'portrait', customWidthInches: 8.5, customHeightInches: 11 }),
+  );
+
+  await page.reload();
+  await page.locator('[data-testid^="button-export-book-"]').first().click();
   await expectDefaultPdfOptions(page);
 });
 

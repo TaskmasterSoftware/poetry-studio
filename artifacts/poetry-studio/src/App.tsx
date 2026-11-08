@@ -3,7 +3,7 @@ import {
   AlignCenter, AlignLeft, AlignRight, BookOpen, Check, CircleHelp,
   Download, Feather, FileText, FolderOpen, History, Indent, Italic, List, ListOrdered,
   Minus, Moon, PanelRight, Plus, Redo2, Search,
-  Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
+  RotateCcw, Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
 import FormCheckPanel from './components/FormCheckPanel';
@@ -1412,6 +1412,15 @@ function App() {
         <option value="wide">Wide · 1.25 in</option>
       </select>
     </label>
+    <button
+      className="button small"
+      type="button"
+      style={{ justifySelf: 'start' }}
+      onClick={() => setPdfExportOptions({ ...defaultPdfExportOptions })}
+      data-testid="button-reset-pdf-options"
+    >
+      <RotateCcw/>Reset to standard
+    </button>
   </div>;
   const insertTab = () => {
     editorRef.current?.focus();
