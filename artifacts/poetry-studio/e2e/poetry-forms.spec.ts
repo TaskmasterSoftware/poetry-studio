@@ -18,3 +18,17 @@ test('lists forms alphabetically and exposes example links for each form', async
   await expect(page.locator('.form-item')).toContainText('Cinquain');
   await expect(page.locator('.form-item').getByRole('link')).toHaveAttribute('href', /gutenberg\.org/);
 });
+
+test('checks the poem against a form and reports potential diversions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('nav-forms').click();
+  await page.getByTestId('button-check-form-haiku').click();
+
+  const report = page.getByTestId('panel-form-check');
+  await expect(report).toBeVisible();
+  await expect(report).toContainText('Haiku');
+  await expect(page.getByTestId('form-check-summary')).toContainText(/potential diversion/i);
+  await expect(page.getByTestId('form-line-check-1')).toBeVisible();
+  await page.getByTestId('button-recheck-form').click();
+  await expect(report).toBeVisible();
+});

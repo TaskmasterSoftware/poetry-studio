@@ -1,3 +1,20 @@
+export type FormCheckSpec = {
+  lineCount?: number;
+  minimumLineCount?: number;
+  lineCountMultipleOf?: number;
+  syllablePattern?: number[];
+  repeatSyllablePattern?: boolean;
+  stanzaPattern?: number[];
+  repeatStanzaPattern?: boolean;
+  rhymePatterns?: string[][];
+  repeatRhymePattern?: boolean;
+  repeatedLines?: Array<[number, number]>;
+  repeatedLinesAcrossStanzas?: { sourceOffsets: number[]; targetOffsets: number[] };
+  cascadeOpeningLines?: boolean;
+  rhymeWithAnchorEveryNthLine?: { anchorLine: number; every: number; alsoLines?: number[] };
+  notes?: string[];
+};
+
 export type FormEntry = {
   name: string;
   aliases?: string[];
@@ -6,6 +23,7 @@ export type FormEntry = {
   example: string;
   exampleTitle: string;
   exampleUrl: string;
+  check?: FormCheckSpec;
 };
 
 // Keep exampleTitle and exampleUrl required so every form has a reference.
@@ -17,6 +35,7 @@ export const forms: FormEntry[] = [
     example: 'A → B → C …',
     exampleTitle: '“Hangul Abecedarian” by Franny Choi',
     exampleUrl: 'https://www.poetryfoundation.org/poetrymagazine/poems/151514/hangul-abecedarian',
+    check: { notes: ['Alphabetical progression is not checked automatically.'] },
   },
   {
     name: 'Acrostic',
@@ -25,6 +44,7 @@ export const forms: FormEntry[] = [
     example: 'initial letters read downward',
     exampleTitle: 'Acrostic examples from the Poetry Foundation',
     exampleUrl: 'https://www.poetryfoundation.org/articles/1594990/acrostics',
+    check: { notes: ['Acrostic spelling needs a target word, which is not currently stored with the poem.'] },
   },
   {
     name: 'Ballad',
@@ -33,6 +53,7 @@ export const forms: FormEntry[] = [
     example: 'ABCB · DEFE',
     exampleTitle: '“The Unquiet Grave”',
     exampleUrl: 'https://www.poetryfoundation.org/poems/50403/the-unquiet-grave',
+    check: { stanzaPattern: [4], repeatStanzaPattern: true, rhymePatterns: [['A', 'B', 'C', 'B']], repeatRhymePattern: true },
   },
   {
     name: 'Balliol rhyme',
@@ -41,6 +62,7 @@ export const forms: FormEntry[] = [
     example: 'AABB',
     exampleTitle: 'Balliol rhyme examples',
     exampleUrl: 'https://en.wikipedia.org/wiki/Balliol_rhyme',
+    check: { lineCount: 4, stanzaPattern: [4], rhymePatterns: [['A', 'A', 'B', 'B']] },
   },
   {
     name: 'Blank verse',
@@ -49,6 +71,7 @@ export const forms: FormEntry[] = [
     example: 'five iambs · no end rhyme',
     exampleTitle: '“Paradise Lost,” Book 12 by John Milton',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45748/paradise-lost-book-12-1674-version',
+    check: { notes: ['Meter and substitutions are not graded; read the stress pattern aloud.'] },
   },
   {
     name: 'Cascade',
@@ -57,6 +80,7 @@ export const forms: FormEntry[] = [
     example: 'a / b / c · d / e / a · f / g / b …',
     exampleTitle: 'Cascade poem examples at dVerse',
     exampleUrl: 'https://dversepoets.com/2026/02/05/mtb-revisiting-cascade-poems',
+    check: { cascadeOpeningLines: true, notes: ['Blank lines are treated as stanza breaks.'] },
   },
   {
     name: 'Chant royal',
@@ -65,6 +89,7 @@ export const forms: FormEntry[] = [
     example: 'five matching stanzas · envoy',
     exampleTitle: '“To May, the Prince of Months” and other examples',
     exampleUrl: 'https://www.classicalpoets.org/chant-royal',
+    check: { notes: ['Chant royal variants differ in stanza length and refrain; review the chosen variant manually.'] },
   },
   {
     name: 'Cinquain',
@@ -74,6 +99,7 @@ export const forms: FormEntry[] = [
     example: '2 · 4 · 6 · 8 · 2',
     exampleTitle: 'Adelaide Crapsey’s “Verse”',
     exampleUrl: 'https://www.gutenberg.org/cache/epub/63010/pg63010.html',
+    check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [2, 4, 6, 8, 2], notes: ['This checks the American syllabic cinquain; other cinquain forms differ.'] },
   },
   {
     name: 'Clerihew',
@@ -82,6 +108,7 @@ export const forms: FormEntry[] = [
     example: 'AABB · uneven line lengths',
     exampleTitle: '“Edmund Clerihew Bentley” by John Foster',
     exampleUrl: 'https://childrens.poetryarchive.org/poem/edmund-clerihew-bentley/',
+    check: { lineCount: 4, stanzaPattern: [4], rhymePatterns: [['A', 'A', 'B', 'B']] },
   },
   {
     name: 'Copla',
@@ -90,6 +117,7 @@ export const forms: FormEntry[] = [
     example: 'varies by regional and stanza form',
     exampleTitle: '“Coplas por la muerte de su padre” by Jorge Manrique',
     exampleUrl: 'https://www.uv.es/ivorra/Literatura/Coplas.htm',
+    check: { notes: ['Copla patterns vary by tradition; this checker does not choose a regional variant.'] },
   },
   {
     name: 'Elegy',
@@ -98,6 +126,7 @@ export const forms: FormEntry[] = [
     example: 'lament · reflection · remembrance',
     exampleTitle: '“Elegy Written in a Country Churchyard” by Thomas Gray',
     exampleUrl: 'https://www.poetryfoundation.org/poems/44299/elegy-written-in-a-country-churchyard',
+    check: { notes: ['Elegies do not have one required line count, meter, or rhyme scheme.'] },
   },
   {
     name: 'Epigram',
@@ -106,6 +135,7 @@ export const forms: FormEntry[] = [
     example: 'setup · turn',
     exampleTitle: '“Epigram” by Matthew Prior',
     exampleUrl: 'https://www.eighteenthcenturypoetry.org/works/pmp18-w0650.shtml',
+    check: { notes: ['The checker cannot assess wit, compression, or the final turn.'] },
   },
   {
     name: 'Free verse',
@@ -114,6 +144,7 @@ export const forms: FormEntry[] = [
     example: 'follow the music of the sentence',
     exampleTitle: '“When I Heard the Learn’d Astronomer” by Walt Whitman',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45479/when-i-heard-the-learnd-astronomer',
+    check: { notes: ['Free verse has no required syllable count or rhyme scheme.'] },
   },
   {
     name: 'Ghazal',
@@ -122,6 +153,14 @@ export const forms: FormEntry[] = [
     example: 'AA · BA · CA · DA …',
     exampleTitle: '“Ghazal” by Agha Shahid Ali',
     exampleUrl: 'https://www.poetryfoundation.org/poems/43279/ghazal-56d221fe8a756',
+    check: {
+      minimumLineCount: 10,
+      lineCountMultipleOf: 2,
+      stanzaPattern: [2],
+      repeatStanzaPattern: true,
+      rhymeWithAnchorEveryNthLine: { anchorLine: 2, every: 2, alsoLines: [1] },
+      notes: ['The refrain and ghazal-specific couplet independence are not checked.'],
+    },
   },
   {
     name: 'Golden shovel',
@@ -130,6 +169,7 @@ export const forms: FormEntry[] = [
     example: 'line endings read as the source poem',
     exampleTitle: '“The Golden Shovel” by Terrance Hayes',
     exampleUrl: 'https://www.poetryfoundation.org/poems/55678/the-golden-shovel',
+    check: { notes: ['Add or choose the source line before checking; source-line correspondence is not currently stored.'] },
   },
   {
     name: 'Haibun',
@@ -138,6 +178,7 @@ export const forms: FormEntry[] = [
     example: 'prose passage · haiku',
     exampleTitle: '“Time Traveler’s Haibun: 1989” by Maureen Thorson',
     exampleUrl: 'https://www.poetryfoundation.org/poems/149728/time-traveler39s-haibun-1989',
+    check: { notes: ['The prose-and-haiku relationship is not automatically classified.'] },
   },
   {
     name: 'Haiku',
@@ -146,6 +187,7 @@ export const forms: FormEntry[] = [
     example: 'short · long · short',
     exampleTitle: '“Haiku” by Etheridge Knight',
     exampleUrl: 'https://www.poetryfoundation.org/poems/47593/haiku',
+    check: { lineCount: 3, stanzaPattern: [3], syllablePattern: [5, 7, 5], notes: ['English syllable counts are estimates; many haiku do not use 5 / 7 / 5.'] },
   },
   {
     name: 'Limerick',
@@ -154,6 +196,7 @@ export const forms: FormEntry[] = [
     example: 'AABBA',
     exampleTitle: '“There was an Old Man with a Beard” by Edward Lear',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45755/there-was-an-old-man-with-a-beard',
+    check: { lineCount: 5, stanzaPattern: [5], rhymePatterns: [['A', 'A', 'B', 'B', 'A']] },
   },
   {
     name: 'Lục bát',
@@ -163,6 +206,7 @@ export const forms: FormEntry[] = [
     example: '6 · 8 · 6 · 8 …',
     exampleTitle: 'Opening lines of “Truyện Kiều” with form notes',
     exampleUrl: 'https://thelittlewhiteattic.blogspot.com/2020/05/truyen-kieu-verse-form-context-language.html',
+    check: { syllablePattern: [6, 8], repeatSyllablePattern: true, stanzaPattern: [2], repeatStanzaPattern: true, notes: ['Vietnamese tone and rhyme rules are not checked by the English pronunciation dictionary.'] },
   },
   {
     name: 'Nonet',
@@ -171,6 +215,7 @@ export const forms: FormEntry[] = [
     example: '9 · 8 · 7 · 6 · 5 · 4 · 3 · 2 · 1',
     exampleTitle: 'Nonet examples at Shadow Poetry',
     exampleUrl: 'http://shadowpoetry.com/resources/wip/nonet.html',
+    check: { lineCount: 9, stanzaPattern: [9], syllablePattern: [9, 8, 7, 6, 5, 4, 3, 2, 1] },
   },
   {
     name: 'Ode',
@@ -179,6 +224,7 @@ export const forms: FormEntry[] = [
     example: 'stanza pattern of your choosing',
     exampleTitle: '“Ode to a Nightingale” by John Keats',
     exampleUrl: 'https://www.poetryfoundation.org/poems/44479/ode-to-a-nightingale',
+    check: { notes: ['Odes vary in stanza structure, meter, and rhyme; no single scheme is assumed.'] },
   },
   {
     name: 'Ovillejo',
@@ -187,6 +233,7 @@ export const forms: FormEntry[] = [
     example: 'question / short answer · … · answers gathered',
     exampleTitle: '“Ovillejos” by Miguel de Cervantes, translated by Paul Archer',
     exampleUrl: 'http://www.paularcher.net/translations/miguel_de_cervantes/ovillejos.html',
+    check: { lineCount: 10, stanzaPattern: [10], syllablePattern: [8, 3, 8, 3, 8, 3, 8, 8, 8, 8] },
   },
   {
     name: 'Pantoum',
@@ -195,6 +242,14 @@ export const forms: FormEntry[] = [
     example: 'ABAB · BCBC · CDCD …',
     exampleTitle: '“Pantoum of the Great Depression” by Donald Justice',
     exampleUrl: 'https://www.poetryfoundation.org/poems/58080/pantoum-of-the-great-depression',
+    check: {
+      stanzaPattern: [4],
+      repeatStanzaPattern: true,
+      rhymePatterns: [['A', 'B', 'A', 'B']],
+      repeatRhymePattern: true,
+      repeatedLinesAcrossStanzas: { sourceOffsets: [2, 4], targetOffsets: [1, 3] },
+      notes: ['The final stanza’s common return to the opening lines is not checked.'],
+    },
   },
   {
     name: 'Rhyme royal',
@@ -203,6 +258,7 @@ export const forms: FormEntry[] = [
     example: 'ABABBCC',
     exampleTitle: '“They flee from me” by Thomas Wyatt',
     exampleUrl: 'https://rpo.library.utoronto.ca/glossary/poems/they-flee-me-sometime-did-me-seek',
+    check: { stanzaPattern: [7], repeatStanzaPattern: true, rhymePatterns: [['A', 'B', 'A', 'B', 'B', 'C', 'C']], repeatRhymePattern: true },
   },
   {
     name: 'Rondeau',
@@ -211,6 +267,7 @@ export const forms: FormEntry[] = [
     example: 'AABBA · AABR · AABBAR',
     exampleTitle: '“In Flanders Fields” by John McCrae',
     exampleUrl: 'https://www.poetryfoundation.org/poems/47380/in-flanders-fields',
+    check: { lineCount: 15, stanzaPattern: [5, 4, 6], rhymePatterns: [['A', 'A', 'B', 'B', 'A'], ['A', 'A', 'B', '-'], ['A', 'A', 'B', 'B', 'A', '-']] },
   },
   {
     name: 'Roundel',
@@ -219,6 +276,7 @@ export const forms: FormEntry[] = [
     example: 'ABAR · BAB · ABAR',
     exampleTitle: '“The Roundel” by Algernon Charles Swinburne',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45301/the-roundel',
+    check: { lineCount: 11, stanzaPattern: [4, 3, 4], rhymePatterns: [['A', 'B', 'A', 'B'], ['A', 'B', 'A'], ['A', 'B', 'A', 'B']] },
   },
   {
     name: 'Sestina',
@@ -227,6 +285,7 @@ export const forms: FormEntry[] = [
     example: 'six repeating end-words',
     exampleTitle: '“Sestina” by Algernon Charles Swinburne',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45304/sestina-56d224c2ea7e6',
+    check: { lineCount: 39, stanzaPattern: [6, 6, 6, 6, 6, 6, 3], notes: ['The six end-word rotation is not checked.'] },
   },
   {
     name: 'Sonnet',
@@ -235,6 +294,7 @@ export const forms: FormEntry[] = [
     example: 'ABAB CDCD EFEF GG',
     exampleTitle: '“Sonnet 18” by William Shakespeare',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45087/sonnet-18-shall-i-compare-thee-to-a-summers-day',
+    check: { lineCount: 14, stanzaPattern: [14], notes: ['Sonnet rhyme schemes vary by tradition; meter and the turn in thought are not graded.'] },
   },
   {
     name: 'Tanka',
@@ -243,6 +303,7 @@ export const forms: FormEntry[] = [
     example: 'short · long · short · long · long',
     exampleTitle: '“Four Tanka” translated by Yuki Tanaka',
     exampleUrl: 'https://www.poetryfoundation.org/poetrymagazine/poems/1682788/four-tanka',
+    check: { lineCount: 5, stanzaPattern: [5], syllablePattern: [5, 7, 5, 7, 7], notes: ['English syllable counts are estimates; translations and modern tanka vary.'] },
   },
   {
     name: 'Tercet',
@@ -251,6 +312,7 @@ export const forms: FormEntry[] = [
     example: 'AAA · ABA · or unrhymed',
     exampleTitle: '“The Convergence of the Twain” by Thomas Hardy',
     exampleUrl: 'https://www.poetryfoundation.org/poems/47266/the-convergence-of-the-twain',
+    check: { stanzaPattern: [3], repeatStanzaPattern: true },
   },
   {
     name: 'Terza rima',
@@ -259,6 +321,7 @@ export const forms: FormEntry[] = [
     example: 'ABA · BCB · CDC …',
     exampleTitle: '“Ode to the West Wind” by Percy Bysshe Shelley',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45134/ode-to-the-west-wind',
+    check: { stanzaPattern: [3], repeatStanzaPattern: true, rhymePatterns: [['A', 'B', 'A']], repeatRhymePattern: true, notes: ['Cross-stanza rhyme links are not checked.'] },
   },
   {
     name: 'Terzanelle',
@@ -267,6 +330,12 @@ export const forms: FormEntry[] = [
     example: 'ABA · bCB · cDC … · final quatrain',
     exampleTitle: 'Terzanelle examples at Shadow Poetry',
     exampleUrl: 'http://www.shadowpoetry.com/resources/wip/terzanelle.html',
+    check: {
+      lineCount: 19,
+      stanzaPattern: [3, 3, 3, 3, 3, 4],
+      repeatedLines: [[1, 6], [1, 12], [1, 18], [3, 9], [3, 15], [3, 19], [2, 6], [5, 9], [8, 12], [11, 15], [14, 18]] as [number, number][],
+      notes: ['Interlocking rhyme links between stanzas are not checked.'],
+    },
   },
   {
     name: 'Triolet',
@@ -275,6 +344,7 @@ export const forms: FormEntry[] = [
     example: 'ABaAabAB',
     exampleTitle: '“Saint’s Day Triolet: Saint Anthony” by Deborah Paredez',
     exampleUrl: 'https://www.poetryfoundation.org/poetrymagazine/poems/56996/saints-day-triolet-saint-anthony',
+    check: { lineCount: 8, stanzaPattern: [8], rhymePatterns: [['A', 'B', 'A', 'A', 'A', 'B', 'A', 'B']], repeatedLines: [[1, 4], [1, 7], [2, 8]] as [number, number][] },
   },
   {
     name: 'Villanelle',
@@ -283,6 +353,13 @@ export const forms: FormEntry[] = [
     example: 'ABA · ABA · ABA · ABA · ABA · ABAA',
     exampleTitle: '“One Art” by Elizabeth Bishop',
     exampleUrl: 'https://www.poetryfoundation.org/poems/47536/one-art',
+    check: {
+      lineCount: 19,
+      stanzaPattern: [3, 3, 3, 3, 3, 4],
+      rhymePatterns: [['A', 'B', 'A'], ['A', 'B', 'A'], ['A', 'B', 'A'], ['A', 'B', 'A'], ['A', 'B', 'A'], ['A', 'B', 'A', 'A']],
+      repeatedLines: [[1, 6], [1, 12], [1, 18], [3, 9], [3, 15], [3, 19]] as [number, number][],
+      notes: ['The checker compares rhyme patterns within each stanza, not the same two rhyme sounds across all stanzas.'],
+    },
   },
 ].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
 
@@ -294,5 +371,12 @@ export function searchPoetryForms(query: string): FormEntry[] {
       .join(' ')
       .toLocaleLowerCase()
       .includes(normalizedQuery),
+  );
+}
+
+export function findPoetryForm(name: string): FormEntry | undefined {
+  const normalizedName = name.trim().toLocaleLowerCase();
+  return forms.find((form) =>
+    [form.name, ...(form.aliases ?? [])].some((candidate) => candidate.toLocaleLowerCase() === normalizedName),
   );
 }

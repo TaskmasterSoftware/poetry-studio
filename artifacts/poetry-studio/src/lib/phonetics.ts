@@ -22,6 +22,12 @@ export type ScannedWord = {
   syllableOffsets: number[];
 };
 
+export type SyllableCountResult = {
+  count: number;
+  estimated: boolean;
+  estimatedWords: string[];
+};
+
 let dictionaryPromise: Promise<Pronunciation[]> | undefined;
 let lexiconPromise: Promise<Map<string, Pronunciation>> | undefined;
 
@@ -98,6 +104,34 @@ async function getLexicon(): Promise<Map<string, Pronunciation>> {
     );
   }
   return lexiconPromise;
+}
+
+export async function getRhymeKey(word: string): Promise<string | null> {
+  const normalized = word.toLowerCase().replace(/’/g, "'").replace(/[^a-z']/g, "");
+  if (!normalized) return null;
+  const pronunciation = (await getLexicon()).get(normalized);
+  return pronunciation?.rhymeKey ?? null;
+}
+
+export async function countLineSyllables(line: string): Promise<SyllableCountResult> {
+  const lexicon = await getLexicon();
+  const words = [...line.matchAll(/[a-z']+/gi)].map((match) => match[0]);
+  let count = 0;
+  const estimatedWords: string[] = [];
+
+  for (const word of words) {
+    const normalized = word.toLowerCase().replace(/’/g, "'");
+    const pronunciation = lexicon.get(normalized);
+    if (pronunciation) {
+      count += pronunciation.syllables;
+      continue;
+    }
+    const fallback = Math.max(1, word.match(/[aeiouy]+/gi)?.length ?? 1);
+    count += fallback;
+    estimatedWords.push(word);
+  }
+
+  return { count, estimated: estimatedWords.length > 0, estimatedWords };
 }
 
 export async function findRhymes(

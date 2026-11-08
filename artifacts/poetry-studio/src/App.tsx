@@ -6,9 +6,11 @@ import {
   Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
+import FormCheckPanel from './components/FormCheckPanel';
 import PoemMetadataPanel from './components/PoemMetadataPanel';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
-import { searchPoetryForms, type FormEntry } from './lib/poetry-forms';
+import { analyzePoemForm, type FormCheckResult } from './lib/form-check';
+import { findPoetryForm, searchPoetryForms, type FormEntry } from './lib/poetry-forms';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import { findGrammarSuggestions, type GrammarSuggestion } from './lib/proofing';
 import { reorderPoemsInBook, type PoemOrderDirection } from './lib/poem-order';
@@ -278,6 +280,9 @@ function App() {
   const [rhymeLoading, setRhymeLoading] = useState(false);
   const [dictionaryError, setDictionaryError] = useState('');
   const [formQuery, setFormQuery] = useState('');
+  const [formCheckState, setFormCheckState] = useState<{ draftId: string; result: FormCheckResult } | null>(null);
+  const [formCheckError, setFormCheckError] = useState('');
+  const [isCheckingForm, setIsCheckingForm] = useState(false);
   const [proofOn, setProofOn] = useState(settings.proof);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [modal, setModal] = useState<'export' | 'settings' | 'history' | 'book-export' | 'remove-draft' | null>(null);
@@ -348,6 +353,8 @@ function App() {
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId);
   const activePoemMetadata = normalizePoemMetadata(activeDraft?.metadata);
   const formLabel = activePoemMetadata.form || 'Free verse';
+  const intendedForm = findPoetryForm(activePoemMetadata.form);
+  const activeFormCheck = formCheckState?.draftId === activeDraftId ? formCheckState.result : null;
   const activeBookId = activeDraft?.bookId ?? books[0]?.id ?? '';
   const shelfBooks: ShelfBook[] = books.map((book) => ({
     id: book.id,
@@ -1215,6 +1222,25 @@ function App() {
       setToast(error instanceof Error ? error.message : 'Could not export this book.');
     }
   };
+  const checkPoemAgainstForm = async (form: FormEntry) => {
+    const currentDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
+    if (!currentDraft) return;
+    updatePoemMetadata(currentDraft.id, {
+      ...normalizePoemMetadata(currentDraft.metadata),
+      form: form.name,
+    });
+    setIsCheckingForm(true);
+    setFormCheckError('');
+    try {
+      const poemText = editorRef.current?.innerText ?? cleanText(currentDraft.editorHtml);
+      const result = await analyzePoemForm(poemText, form);
+      setFormCheckState({ draftId: currentDraft.id, result });
+    } catch (error) {
+      setFormCheckError(error instanceof Error ? error.message : 'Could not check this poem against the form.');
+    } finally {
+      setIsCheckingForm(false);
+    }
+  };
   const applyForm = (form: FormEntry) => {
     const currentDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
     if (currentDraft) {
@@ -1433,6 +1459,28 @@ function App() {
               {selection && <div className="notice" style={{ marginTop: 12 }}><Feather/>Using your selection: “{selection.slice(0, 38)}{selection.length > 38 ? '…' : ''}”</div>}
             </div>}
             {activeTool === 'forms' && <div className="panel-card">
+              <div className="form-check-controls">
+                <div>
+                  <span className="field-label">Intended form</span>
+                  <strong>{activePoemMetadata.form || 'Not selected'}</strong>
+                </div>
+                <button
+                  className="button small"
+                  type="button"
+                  disabled={!intendedForm || isCheckingForm}
+                  onClick={() => { if (intendedForm) void checkPoemAgainstForm(intendedForm); }}
+                  data-testid="button-check-intended-form"
+                >{isCheckingForm ? 'Checking…' : 'Check poem'}</button>
+              </div>
+              {formCheckError && <div className="notice form-check-error" role="alert">{formCheckError}</div>}
+              {activeFormCheck && <FormCheckPanel
+                result={activeFormCheck}
+                checking={isCheckingForm}
+                onRecheck={() => {
+                  const form = findPoetryForm(activeFormCheck.formName);
+                  if (form) void checkPoemAgainstForm(form);
+                }}
+              />}
               <label className="field-label" htmlFor="form-search">Browse forms</label>
               <div className="search-wrap"><Search/><input id="form-search" className="search-field" placeholder="Search forms" value={formQuery} onChange={(event) => setFormQuery(event.target.value)} data-testid="input-form-search"/></div>
               <div style={{ marginTop: 8 }}>{filteredForms.map((form) => <div className="form-item" key={form.name}>
@@ -1443,7 +1491,10 @@ function App() {
                 <a className="form-example-link" href={form.exampleUrl} target="_blank" rel="noreferrer" aria-label={`Read example: ${form.exampleTitle}`}>
                   Example: {form.exampleTitle}
                 </a>
-                <button className="button small" style={{ marginTop: 8 }} onClick={() => applyForm(form)} data-testid={`button-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Use as reference</button>
+                <div className="form-item-actions">
+                  <button className="button small" onClick={() => applyForm(form)} data-testid={`button-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Use as reference</button>
+                  <button className="button small secondary" type="button" disabled={isCheckingForm} onClick={() => void checkPoemAgainstForm(form)} data-testid={`button-check-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Check poem</button>
+                </div>
               </div>)}</div>
             </div>}
             {activeTool === 'proof' && <div className="panel-card">
