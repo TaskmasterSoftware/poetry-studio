@@ -400,6 +400,7 @@ function App() {
   const [pdfExportOptions, setPdfExportOptions] = useState<PdfExportOptions>(() =>
     normalizePdfExportOptions(readStorage<unknown>(pdfExportOptionsStorageKey, null)),
   );
+  const [pdfExportOptionsSaveFailed, setPdfExportOptionsSaveFailed] = useState(false);
 
   useEffect(() => {
     if (editorRef.current) { editorRef.current.innerHTML = html; savedHtml.current = html; }
@@ -431,8 +432,9 @@ function App() {
   useEffect(() => {
     try {
       localStorage.setItem(pdfExportOptionsStorageKey, JSON.stringify(pdfExportOptions));
+      setPdfExportOptionsSaveFailed(false);
     } catch {
-      // Storage may be unavailable or full; keep the current choices for this session.
+      setPdfExportOptionsSaveFailed(true);
     }
   }, [pdfExportOptions]);
   useEffect(() => {
@@ -1433,6 +1435,9 @@ function App() {
     >
       <RotateCcw/>Reset to standard
     </button>
+    {pdfExportOptionsSaveFailed && <div className="notice" role="status" data-testid="pdf-options-save-warning" style={{ gridColumn: '1 / -1', margin: 0 }}>
+      <CircleHelp/>PDF print choices could not be saved in this browser. Your current selections will still be used for exports during this session.
+    </div>}
   </div>;
   const insertTab = () => {
     editorRef.current?.focus();

@@ -84,6 +84,32 @@ test('resets poem and book PDF choices to standard defaults and saves them', asy
   await expectDefaultPdfOptions(page);
 });
 
+test('warns when PDF print choices cannot be saved and uses them for the current export', async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'poetry-studio-pdf-export-options') {
+        throw new DOMException('Storage quota exceeded', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    };
+  });
+  await page.goto('/');
+  await page.getByTestId('button-export').click();
+
+  await page.locator(pageSize).selectOption('a5');
+  await page.locator(orientation).selectOption('landscape');
+  await expect(page.getByTestId('pdf-options-save-warning')).toContainText(
+    'Your current selections will still be used for exports during this session.',
+  );
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByTestId('button-export-pdf').click();
+  const download = await downloadPromise;
+  const pdf = (await readFile(await download.path())).toString('latin1');
+  expect(pdf).toContain('/MediaBox [0 0 595.28 419.53]');
+});
+
 test('downloads landscape PDFs from both poem and book export dialogs', async ({ page }) => {
   await page.goto('/');
 
