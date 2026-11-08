@@ -1,0 +1,169 @@
+.poem-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.metadata-section-head p {
+  margin: 4px 0 0;
+  color: #829087;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.metadata-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.metadata-field .field-label {
+  margin: 0;
+}
+
+.metadata-field .text-field {
+  min-width: 0;
+  padding: 8px;
+  font-size: 11px;
+}
+
+.metadata-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.metadata-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.metadata-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 8px;
+  border: 1px solid #d9dfd4;
+  border-radius: 999px;
+  background: #edf1e8;
+  color: #52665e;
+  font-size: 10px;
+}
+
+.metadata-tag button {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #75877c;
+}
+
+.metadata-tag svg { width: 10px; height: 10px; }
+.metadata-tag button:hover { background: #dbe3d7; color: #354d43; }
+
+.metadata-submissions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 3px;
+  border-top: 1px solid #e6e3da;
+}
+
+.metadata-submissions-head > div > span {
+  display: block;
+  margin-top: 3px;
+  color: #879389;
+  font-size: 9px;
+}
+
+.metadata-submissions-head .button {
+  flex: none;
+}
+
+.metadata-empty {
+  padding: 10px;
+  border-radius: 5px;
+  background: #f3f1e9;
+  color: #7b897f;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.metadata-submissions {
+  display: grid;
+  gap: 9px;
+}
+
+.metadata-submission {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e5e2d8;
+  border-radius: 6px;
+  background: #faf9f4;
+}
+
+.metadata-submission-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metadata-submission-title strong {
+  overflow: hidden;
+  color: #40564d;
+  font: 600 11px var(--app-font-sans, sans-serif);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-remove {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: none;
+  place-items: center;
+  border: 1px solid #e4d3ce;
+  border-radius: 4px;
+  background: transparent;
+  color: #a56f65;
+}
+
+.metadata-remove:hover { background: #f5e9e5; color: #8f4f45; }
+.metadata-remove svg { width: 13px; height: 13px; }
+
+.metadata-website-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #537b69;
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.metadata-website-link:hover { text-decoration: underline; }
+.metadata-website-link svg { width: 12px; height: 12px; }
+
+.metadata-date-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.dark .metadata-submissions-head { border-color: #3b4d46; }
+.dark .metadata-tag { border-color: #40554b; background: #30453c; color: #cedbd0; }
+.dark .metadata-tag button { color: #afc2b5; }
+.dark .metadata-tag button:hover { background: #40564a; color: #f0eee4; }
+.dark .metadata-empty { background: #243831; color: #b1beb3; }
+.dark .metadata-submission { border-color: #3b4d46; background: #243831; }
+.dark .metadata-submission-title strong { color: #e0e5db; }
+.dark .metadata-remove { border-color: #644b46; color: #d3a299; }
+.dark .metadata-remove:hover { background: #453632; color: #f0c8bc; }
+.dark .metadata-website-link { color: #a9cfb8; }

@@ -69,6 +69,42 @@
 .shelf-action-import { flex: 0 0 auto; }
 .shelf-action-import:hover { background: #344d47; border-color: #718a7d; }
 
+.bookshelf-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 11px;
+  border: 1px solid #ffffff22;
+  border-radius: 5px;
+  background: #182f29;
+  color: #9eb2a8;
+}
+
+.bookshelf-search > svg { width:14px; height:14px; flex:none; margin-left:9px; }
+.bookshelf-search input { width:100%; min-width:0; height:32px; padding:0 7px; border:0; outline:0; background:transparent; color:#edf0e7; font:10px var(--app-font-sans, sans-serif); }
+.bookshelf-search input::placeholder { color:#9daf9f; opacity:.85; }
+.bookshelf-search button { display:grid; width:28px; height:28px; flex:none; place-items:center; margin-right:2px; padding:0; border:0; border-radius:4px; background:transparent; color:#a9bbb0; }
+.bookshelf-search button:hover { background:#ffffff12; color:#f0eee4; }
+.bookshelf-search button svg { width:13px; height:13px; }
+
+.bookshelf-search-results {
+  display:grid;
+  gap:3px;
+  max-height:min(56dvh, 620px);
+  overflow-y:auto;
+  padding:2px 1px 5px 0;
+  scrollbar-color:#637a6e transparent;
+  scrollbar-width:thin;
+}
+
+.bookshelf-search-count { padding:2px 5px 5px; color:#9eb2a8; font:9px var(--app-font-mono, monospace); }
+.bookshelf-search-result { display:grid; gap:3px; min-width:0; padding:8px 9px; border:1px solid transparent; border-radius:5px; background:transparent; color:#e8e8dc; text-align:left; }
+.bookshelf-search-result:hover,.bookshelf-search-result.is-current { border-color:#ffffff20; background:#ffffff0d; }
+.bookshelf-search-result span { overflow:hidden; font:12px var(--app-font-serif, Georgia, serif); text-overflow:ellipsis; white-space:nowrap; }
+.bookshelf-search-result small { overflow:hidden; color:#9eb2a8; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.bookshelf-search-empty { margin:0; padding:8px 5px; color:#a9bbb0; font-size:10px; line-height:1.5; }
+
 .bookshelf-list {
   display: flex;
   flex-direction: column;
@@ -249,6 +285,7 @@
 @media (max-width: 760px) {
   .bookshelf { max-height: none; }
   .bookshelf-list { max-height: 48dvh; }
+  .bookshelf-search-results { max-height: 36dvh; }
   .bookshelf-head { padding-bottom: 10px; }
   .bookshelf-actions { padding-bottom: 9px; }
   .bookshelf-empty { margin: 3px 0; }

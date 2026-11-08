@@ -6,6 +6,7 @@ import {
   Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
+import PoemMetadataPanel from './components/PoemMetadataPanel';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import { findGrammarSuggestions, type GrammarSuggestion } from './lib/proofing';
@@ -15,12 +16,12 @@ import {
 } from './lib/book-library';
 import {
   choosePoemFile, downloadPoemFile, isWritablePoemFileFormat, poemTextToEditorHtml, readPoemFile, serializeBookPdf, serializePoemPdf,
-  appendBrowserPoemRevision, defaultPdfExportOptions, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, normalizePdfExportOptions, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
-  type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type WritablePoemFileFormat, type WritablePoemFileHandle,
+  appendBrowserPoemRevision, defaultPdfExportOptions, emptyPoemMetadata, isBrowserPoemDraft, isBrowserPoemRevision, isSavedPoemSource, normalizePdfExportOptions, normalizePoemMetadata, removeBrowserPoemDraft, restoreBrowserPoemDraft, serializePoem, writePoemFile,
+  type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type PoemMetadata, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 import { diffWords } from './lib/version-diff';
 
-type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion';
+type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion' | 'metadata';
 type FormEntry = { name: string; structure: string; description: string; example: string };
 
 const starter = `<p>At first light, the harbor keeps its blue</p><p>like a secret folded into glass.</p><p>The gulls unthread the quiet, one by one;</p><p>the tide turns over what the night let pass.</p><p><br></p><p>I write the names of rain along the sill,</p><p>then watch the letters loosen into air.</p><p>Some things are held by learning to be still.</p><p>Some things are gone, and still are everywhere.</p>`;
@@ -109,7 +110,9 @@ function readPoemRevisions(draftId: string): BrowserPoemRevision[] {
 }
 function readStoredDrafts(): BrowserPoemDraft[] {
   const saved = readStorage<unknown>(draftsStorageKey, []);
-  return Array.isArray(saved) ? saved.filter(isBrowserPoemDraft) : [];
+  return Array.isArray(saved)
+    ? saved.filter(isBrowserPoemDraft).map((draft) => ({ ...draft, metadata: normalizePoemMetadata(draft.metadata) }))
+    : [];
 }
 function sameDraft(left: BrowserPoemDraft | undefined, right: BrowserPoemDraft | undefined) {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -159,7 +162,9 @@ function mergeDraftChanges(
 }
 function loadBrowserDraftStore() {
   const savedDrafts = readStorage<unknown>(draftsStorageKey, null);
-  const drafts = Array.isArray(savedDrafts) ? savedDrafts.filter(isBrowserPoemDraft) : [];
+  const drafts = Array.isArray(savedDrafts)
+    ? savedDrafts.filter(isBrowserPoemDraft).map((draft) => ({ ...draft, metadata: normalizePoemMetadata(draft.metadata) }))
+    : [];
   if (drafts.length) {
     const savedActiveId = readSessionStorage<string>(tabActiveDraftStorageKey, '')
       || readStorage<string>(activeDraftStorageKey, '');
@@ -173,6 +178,7 @@ function loadBrowserDraftStore() {
     title: readStorage('poetry-studio-title', 'The harbor at first light'),
     editorHtml: readStorage('poetry-studio-manuscript', starter),
     source: readSavedPoemSource(),
+    metadata: emptyPoemMetadata(),
   };
   return { drafts: [migratedDraft], activeDraftId: migratedDraft.id };
 }
@@ -307,7 +313,6 @@ function App() {
   const [fontFamily, setFontFamily] = useState(settings.fontFamily);
   const [toolbarFontSize, setToolbarFontSize] = useState(settings.fontSize);
   const [toolbarFontFamily, setToolbarFontFamily] = useState(settings.fontFamily);
-  const [formLabel, setFormLabel] = useState('Free verse');
   const [ignoredGrammar, setIgnoredGrammar] = useState<string[]>([]);
   const [focusedProofRange, setFocusedProofRange] = useState<{ start: number; end: number } | null>(null);
   const [scansionRows, setScansionRows] = useState<ScannedWord[][]>([]);
@@ -361,7 +366,10 @@ function App() {
   const wordCount = wordsOf(text).length;
   const lines = text.split(/\n/).filter((line) => line.trim());
   const lineCount = lines.length;
-  const activeBookId = drafts.find((draft) => draft.id === activeDraftId)?.bookId ?? books[0]?.id ?? '';
+  const activeDraft = drafts.find((draft) => draft.id === activeDraftId);
+  const activePoemMetadata = normalizePoemMetadata(activeDraft?.metadata);
+  const formLabel = activePoemMetadata.form || 'Free verse';
+  const activeBookId = activeDraft?.bookId ?? books[0]?.id ?? '';
   const shelfBooks: ShelfBook[] = books.map((book) => ({
     id: book.id,
     title: book.title,
@@ -371,6 +379,7 @@ function App() {
     id: draft.id,
     title: draft.title || 'Untitled poem',
     bookId: draft.bookId ?? activeBookId,
+    metadata: normalizePoemMetadata(draft.metadata),
   }));
   const bookToExport = books.find((book) => book.id === bookExportId);
   const scanTextLines = text.split('\n');
@@ -579,6 +588,20 @@ function App() {
       ?? targetDraftId;
   }, [persistDraftList]);
 
+  const updatePoemMetadata = useCallback((draftId: string, metadata: PoemMetadata) => {
+    const currentDraft = draftsRef.current.find((draft) => draft.id === draftId);
+    if (!currentDraft) return;
+    const changes: Partial<Omit<BrowserPoemDraft, 'id'>> = {
+      metadata: normalizePoemMetadata(metadata),
+    };
+    if (draftId === activeDraftId) {
+      changes.title = titleRef.current?.value ?? title;
+      changes.editorHtml = editorRef.current?.innerHTML ?? currentDraft.editorHtml;
+      changes.source = openedSource;
+    }
+    updateDraft(draftId, changes);
+  }, [activeDraftId, openedSource, title, updateDraft]);
+
   const saveRevision = useCallback((draftId: string, revisionTitle: string, editorHtml: string) => {
     const history = readPoemRevisions(draftId);
     const revision: BrowserPoemRevision = {
@@ -626,7 +649,9 @@ function App() {
       let latest: BrowserPoemDraft[];
       try {
         const parsed: unknown = JSON.parse(event.newValue);
-        latest = Array.isArray(parsed) ? parsed.filter(isBrowserPoemDraft) : [];
+        latest = Array.isArray(parsed)
+          ? parsed.filter(isBrowserPoemDraft).map((draft) => ({ ...draft, metadata: normalizePoemMetadata(draft.metadata) }))
+          : [];
       } catch {
         return;
       }
@@ -717,6 +742,7 @@ function App() {
       editorHtml: '<p><br></p>',
       source: null,
       bookId: bookId || booksRef.current[0]?.id,
+      metadata: emptyPoemMetadata(),
     };
     persistDraftList([...draftsRef.current, draft]);
     activateDraft(draft);
@@ -746,6 +772,7 @@ function App() {
           editorHtml: '<p><br></p>',
           source: null,
           bookId: draft.bookId ?? booksRef.current[0]?.id,
+          metadata: emptyPoemMetadata(),
         };
         persistDraftList([cleanDraft]);
         activateDraft(cleanDraft);
@@ -772,6 +799,7 @@ function App() {
       editorHtml: '<p><br></p>',
       source: null,
       bookId: book.id,
+      metadata: emptyPoemMetadata(),
     };
     persistBookList([...booksRef.current, book]);
     persistDraftList([...draftsRef.current, draft]);
@@ -841,6 +869,7 @@ function App() {
         editorHtml: poem.editorHtml,
         source: poem.source,
         bookId: book.id,
+        metadata: normalizePoemMetadata(poem.metadata),
       }));
       persistBookList([...booksRef.current, book]);
       persistDraftList([...draftsRef.current, ...importedDrafts]);
@@ -856,7 +885,14 @@ function App() {
     const nextHtml = poem.editorHtml ?? poemTextToEditorHtml(poem.text);
     const writableFormat = isWritablePoemFileFormat(poem.format) ? poem.format : null;
     const source = writableFormat ? { fileName: poem.fileName, format: writableFormat } : null;
-    const draft: BrowserPoemDraft = { id: createDraftId(), title: poem.title, editorHtml: nextHtml, source, bookId: activeBookId || booksRef.current[0]?.id };
+    const draft: BrowserPoemDraft = {
+      id: createDraftId(),
+      title: poem.title,
+      editorHtml: nextHtml,
+      source,
+      bookId: activeBookId || booksRef.current[0]?.id,
+      metadata: emptyPoemMetadata(),
+    };
     const nextDrafts = [...draftsRef.current, draft];
     persistDraftList(nextDrafts);
     activateDraft(draft);
@@ -1201,7 +1237,15 @@ function App() {
     }
   };
   const applyForm = (form: FormEntry) => {
-    setFormLabel(form.name); setModal(null); setToast(`${form.name} reference loaded`);
+    const currentDraft = draftsRef.current.find((draft) => draft.id === activeDraftId);
+    if (currentDraft) {
+      updatePoemMetadata(currentDraft.id, {
+        ...normalizePoemMetadata(currentDraft.metadata),
+        form: form.name,
+      });
+    }
+    setModal(null);
+    setToast(`${form.name} reference loaded`);
   };
   const renderPdfExportOptions = () => <div className="form-grid" style={{ margin: '0 0 12px' }}>
     <label>
@@ -1271,6 +1315,7 @@ function App() {
         <nav aria-label="Studio tools">
           <button className={`side-button ${activeTool === 'rhymes' ? 'active' : ''}`} onClick={() => chooseTool('rhymes')} data-testid="nav-rhymes"><Feather/><span>Rhyme room</span></button>
           <button className={`side-button ${activeTool === 'forms' ? 'active' : ''}`} onClick={() => chooseTool('forms')} data-testid="nav-forms"><BookOpen/><span>Forms library</span></button>
+          <button className={`side-button ${activeTool === 'metadata' ? 'active' : ''}`} onClick={() => chooseTool('metadata')} data-testid="nav-metadata"><FileText/><span>Poem metadata</span></button>
           <button className={`side-button ${activeTool === 'proof' ? 'active' : ''}`} onClick={() => chooseTool('proof')} data-testid="nav-proof"><SpellCheck/><span>Proofing</span></button>
           <button className={`side-button ${activeTool === 'scansion' ? 'active' : ''}`} onClick={() => chooseTool('scansion')} data-testid="nav-scansion"><Type/><span>Scansion</span></button>
         </nav>
@@ -1387,9 +1432,14 @@ function App() {
           </section>
           <aside className="right-panel">
             <div className="panel-head">
-              <div><div className="panel-title">{activeTool === 'rhymes' ? 'Rhyme room' : activeTool === 'forms' ? 'Forms library' : activeTool === 'proof' ? 'Proofing' : 'Scansion'}</div><div className="panel-sub">{activeTool === 'rhymes' ? 'Listen for an ending.' : activeTool === 'forms' ? 'A small shelf of structures.' : activeTool === 'proof' ? 'Suggestions, not rules.' : 'A light touch on the beat.'}</div></div>
+              <div><div className="panel-title">{activeTool === 'rhymes' ? 'Rhyme room' : activeTool === 'forms' ? 'Forms library' : activeTool === 'proof' ? 'Proofing' : activeTool === 'metadata' ? 'Poem metadata' : 'Scansion'}</div><div className="panel-sub">{activeTool === 'rhymes' ? 'Listen for an ending.' : activeTool === 'forms' ? 'A small shelf of structures.' : activeTool === 'proof' ? 'Suggestions, not rules.' : activeTool === 'metadata' ? 'Notes and submission history.' : 'A light touch on the beat.'}</div></div>
               <button className="button ghost small" title="Panel options" aria-label="Panel options" onClick={() => setModal('settings')}><PanelRight/></button>
             </div>
+            {activeTool === 'metadata' && <PoemMetadataPanel
+              key={activeDraftId}
+              metadata={activePoemMetadata}
+              onChange={(metadata) => updatePoemMetadata(activeDraftId, metadata)}
+            />}
             {activeTool === 'rhymes' && <div className="panel-card">
               <label className="field-label" htmlFor="rhyme-query">Find a sound</label>
               <div className="search-wrap"><Search/><input id="rhyme-query" className="search-field" placeholder="Type a word or select a line" value={rhymeQuery} onChange={(event) => setRhymeQuery(event.target.value)} data-testid="input-rhyme-search"/></div>

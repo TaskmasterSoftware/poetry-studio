@@ -1,4 +1,7 @@
-import { isSavedPoemSource, type BrowserPoemDraft, type SavedPoemSource } from "./poem-files";
+import {
+  isSavedPoemSource, normalizePoemMetadata,
+  type BrowserPoemDraft, type PoemMetadata, type SavedPoemSource,
+} from "./poem-files";
 
 export interface BrowserPoemBook {
   id: string;
@@ -10,6 +13,7 @@ export interface BookShelfPoem {
   title: string;
   editorHtml: string;
   source: SavedPoemSource | null;
+  metadata: PoemMetadata;
 }
 
 export interface ImportedPoemBook {
@@ -161,6 +165,7 @@ export function serializeBookBundle(bookTitle: string, drafts: BrowserPoemDraft[
       title: draft.title,
       editorHtml: sanitizeBookEditorHtml(draft.editorHtml),
       source: isSavedPoemSource(draft.source) ? draft.source : null,
+      metadata: normalizePoemMetadata(draft.metadata),
     })),
   };
   return JSON.stringify(bundle, null, 2);
@@ -195,7 +200,7 @@ export async function readBookBundle(file: File): Promise<ImportedPoemBook> {
 
   const poems = value.poems.map((entry): BookShelfPoem => {
     if (!entry || typeof entry !== "object") throw new Error("This book contains a poem with invalid data.");
-    const poem = entry as { title?: unknown; editorHtml?: unknown; source?: unknown };
+    const poem = entry as { title?: unknown; editorHtml?: unknown; source?: unknown; metadata?: unknown };
     if (typeof poem.title !== "string" || typeof poem.editorHtml !== "string") {
       throw new Error("This book contains a poem without a title or manuscript.");
     }
@@ -203,6 +208,7 @@ export async function readBookBundle(file: File): Promise<ImportedPoemBook> {
       title: poem.title,
       editorHtml: sanitizeBookEditorHtml(poem.editorHtml),
       source: isSavedPoemSource(poem.source) ? poem.source : null,
+      metadata: normalizePoemMetadata(poem.metadata),
     };
   });
 

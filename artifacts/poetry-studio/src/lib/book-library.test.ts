@@ -8,6 +8,7 @@ import {
   serializeBookBundle,
 } from "./book-library";
 import { serializeBookPdf } from "./poem-files";
+import { emptyPoemMetadata } from "./poem-files";
 import type { BrowserPoemDraft } from "./poem-files";
 
 Object.defineProperty(globalThis, "DOMParser", { value: XmlDomParser, configurable: true });
@@ -54,6 +55,17 @@ test("book bundle keeps poem order and safe formatting while removing unsafe HTM
       title: "First",
       editorHtml: '<p style="text-align: center; color: red" onclick="bad()"><strong>Bright</strong><script>bad()</script></p>',
       source: null,
+      metadata: {
+        ...emptyPoemMetadata(),
+        dateWritten: "2025-03-10",
+        form: "Ghazal",
+        tags: ["winter"],
+        notes: "A private note",
+        submissions: [
+          { id: "sub-1", publisher: "North Review", websiteUrl: "https://north.example", submittedAt: "2025-04-01", status: "rejected", responseDate: "2025-05-01", notes: "Try again later." },
+          { id: "sub-2", publisher: "North Review", websiteUrl: "https://north.example", submittedAt: "2025-06-01", status: "pending", responseDate: "", notes: "" },
+        ],
+      },
     },
     { id: "poem-2", title: "Second", editorHtml: "<p>Quiet</p>", source: null },
   ];
@@ -64,7 +76,20 @@ test("book bundle keeps poem order and safe formatting while removing unsafe HTM
   assert.deepEqual(imported.poems.map((poem) => poem.title), ["First", "Second"]);
   assert.match(imported.poems[0].editorHtml, /style="text-align:center"/);
   assert.match(imported.poems[0].editorHtml, /<strong>Bright<\/strong>/);
+  assert.deepEqual(imported.poems[0].metadata, poems[0].metadata);
   assert.doesNotMatch(imported.poems[0].editorHtml, /onclick|script|color:red/i);
+});
+
+test("imports older book files with empty poem metadata", async () => {
+  const file = new File([JSON.stringify({
+    format: "poetry-studio-book",
+    version: 1,
+    book: { title: "Older book" },
+    poems: [{ title: "First", editorHtml: "<p>One</p>", source: null }],
+  })], "older.poetrybook");
+  const imported = await readBookBundle(file);
+
+  assert.deepEqual(imported.poems[0].metadata, emptyPoemMetadata());
 });
 
 test("book file import rejects incompatible versions and empty books", async () => {

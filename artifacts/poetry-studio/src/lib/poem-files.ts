@@ -31,12 +31,112 @@ export interface SavedPoemSource {
   format: WritablePoemFileFormat;
 }
 
+export type PoemSubmissionStatus = 'pending' | 'published' | 'rejected';
+
+export interface PoemSubmission {
+  id: string;
+  publisher: string;
+  websiteUrl: string;
+  submittedAt: string;
+  status: PoemSubmissionStatus;
+  responseDate: string;
+  notes: string;
+}
+
+export interface PoemMetadata {
+  dateWritten: string;
+  form: string;
+  tags: string[];
+  notes: string;
+  submissions: PoemSubmission[];
+}
+
 export interface BrowserPoemDraft {
   id: string;
   title: string;
   editorHtml: string;
   source: SavedPoemSource | null;
   bookId?: string;
+  metadata?: PoemMetadata;
+}
+
+export function emptyPoemMetadata(): PoemMetadata {
+  return { dateWritten: '', form: '', tags: [], notes: '', submissions: [] };
+}
+
+function metadataText(value: unknown, maxLength: number) {
+  return typeof value === 'string' ? value.slice(0, maxLength) : '';
+}
+
+function metadataDate(value: unknown) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : '';
+}
+
+export function normalizePoemMetadata(value: unknown): PoemMetadata {
+  if (!value || typeof value !== 'object') return emptyPoemMetadata();
+  const metadata = value as Partial<PoemMetadata>;
+  const tags = Array.isArray(metadata.tags)
+    ? [...new Map(metadata.tags
+      .filter((tag): tag is string => typeof tag === 'string')
+      .map((tag) => tag.trim().slice(0, 80))
+      .filter(Boolean)
+      .map((tag) => [tag.toLocaleLowerCase(), tag] as const)).values()].slice(0, 100)
+    : [];
+  const submissions = Array.isArray(metadata.submissions)
+    ? metadata.submissions.slice(0, 500).filter((entry) => entry && typeof entry === 'object').map((entry, index) => {
+      const submission = entry as Partial<PoemSubmission>;
+      const status: PoemSubmissionStatus = submission.status === 'published' || submission.status === 'rejected'
+        ? submission.status
+        : 'pending';
+      return {
+        id: metadataText(submission.id, 128) || `submission-${index + 1}`,
+        publisher: metadataText(submission.publisher, 200),
+        websiteUrl: metadataText(submission.websiteUrl, 1000),
+        submittedAt: metadataDate(submission.submittedAt),
+        status,
+        responseDate: metadataDate(submission.responseDate),
+        notes: metadataText(submission.notes, 10000),
+      };
+    })
+    : [];
+  return {
+    dateWritten: metadataDate(metadata.dateWritten),
+    form: metadataText(metadata.form, 120),
+    tags,
+    notes: metadataText(metadata.notes, 20000),
+    submissions,
+  };
+}
+
+function normalizeSearchText(value: string) {
+  return value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase();
+}
+
+export function matchesPoemMetadataSearch(
+  poem: Pick<BrowserPoemDraft, 'title' | 'metadata'>,
+  query: string,
+) {
+  const terms = normalizeSearchText(query).trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const metadata = normalizePoemMetadata(poem.metadata);
+  const searchableText = normalizeSearchText([
+    poem.title,
+    metadata.dateWritten,
+    metadata.form,
+    metadata.tags.join(' '),
+    metadata.notes,
+    ...metadata.submissions.flatMap((submission) => [
+      submission.publisher,
+      submission.websiteUrl,
+      submission.submittedAt,
+      submission.status === 'pending' ? 'pending awaiting reply' : submission.status,
+      submission.responseDate,
+      submission.notes,
+    ]),
+  ].join(' '));
+  return terms.every((term) => searchableText.includes(term));
 }
 
 export interface BrowserPoemRevision {

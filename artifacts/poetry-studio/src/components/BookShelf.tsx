@@ -1,13 +1,14 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
-  ArrowDown, ArrowUp, BookMarked, BookOpen, Check, ChevronDown, Download, FilePlus2, FolderPlus, Import, MoreHorizontal,
+  ArrowDown, ArrowUp, BookMarked, BookOpen, Check, ChevronDown, Download, FilePlus2, FolderPlus, Import, MoreHorizontal, Search,
   Pencil, Plus, X,
 } from 'lucide-react';
+import { matchesPoemMetadataSearch, type PoemMetadata } from '../lib/poem-files';
 import type { PoemOrderDirection } from '../lib/poem-order';
 import './BookShelf.css';
 
 export type ShelfBook = { id: string; title: string; poemCount: number };
-export type ShelfPoem = { id: string; title: string; bookId: string };
+export type ShelfPoem = { id: string; title: string; bookId: string; metadata: PoemMetadata };
 const collapsedBooksStorageKey = 'poetry-studio-collapsed-books';
 
 function readCollapsedBookIds() {
@@ -52,6 +53,7 @@ export default function BookShelf({
   const [renamingBookId, setRenamingBookId] = useState('');
   const [renameValue, setRenameValue] = useState('');
   const [collapsedBookIds, setCollapsedBookIds] = useState(readCollapsedBookIds);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     try {
@@ -91,6 +93,9 @@ export default function BookShelf({
     });
   };
 
+  const isSearching = Boolean(searchQuery.trim());
+  const matchingPoems = poems.filter((poem) => matchesPoemMetadataSearch(poem, searchQuery));
+
   return (
     <section className="bookshelf" aria-label="Bookshelf">
       <header className="bookshelf-head">
@@ -112,7 +117,45 @@ export default function BookShelf({
         </button>
       </div>
 
-      {books.length === 0 ? (
+      <div className="bookshelf-search">
+        <Search aria-hidden="true" />
+        <label className="sr-only" htmlFor="bookshelf-search">Search poems and metadata</label>
+        <input
+          id="bookshelf-search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search poems and metadata"
+          data-testid="input-poem-search"
+        />
+        {searchQuery && <button
+          type="button"
+          onClick={() => setSearchQuery('')}
+          aria-label="Clear poem search"
+          data-testid="button-clear-poem-search"
+        ><X aria-hidden="true" /></button>}
+      </div>
+
+      {isSearching ? (
+        <div className="bookshelf-search-results" role="list" aria-label="Matching poems" data-testid="poem-search-results">
+          <div className="bookshelf-search-count">{matchingPoems.length} {matchingPoems.length === 1 ? 'poem' : 'poems'} found</div>
+          {matchingPoems.map((poem) => {
+            const bookTitle = books.find((book) => book.id === poem.bookId)?.title ?? 'Unfiled';
+            return <div role="listitem" key={poem.id}>
+              <button
+                type="button"
+                className={`bookshelf-search-result${poem.id === activePoemId ? ' is-current' : ''}`}
+                onClick={() => onSelectPoem(poem.id)}
+                aria-label={`Open ${poem.title} from ${bookTitle}`}
+                data-testid={`search-result-poem-${poem.id}`}
+              >
+                <span>{poem.title}</span>
+                <small>{bookTitle}</small>
+              </button>
+            </div>;
+          })}
+          {!matchingPoems.length && <p className="bookshelf-search-empty">No matches. Try a title, tag, note, publisher, or status.</p>}
+        </div>
+      ) : books.length === 0 ? (
         <div className="bookshelf-empty" data-testid="empty-bookshelf">
           <div className="empty-mark" aria-hidden="true"><BookOpen /></div>
           <h3>A place for what’s next</h3>
