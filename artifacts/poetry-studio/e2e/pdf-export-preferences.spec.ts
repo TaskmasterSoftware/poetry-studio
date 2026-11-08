@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 const pageSize = '[data-testid="select-pdf-page-size"]';
 const margins = '[data-testid="select-pdf-margins"]';
@@ -45,4 +46,34 @@ test('restores PDF print choices after reload in poem and book export dialogs', 
   await page.reload();
   await page.getByTestId('button-export').click();
   await expectDefaultPdfOptions(page);
+});
+
+test('downloads landscape PDFs from both poem and book export dialogs', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByTestId('button-export').click();
+  await expect(page.locator(orientation).locator('option')).toHaveText(['Portrait', 'Landscape']);
+  await page.locator(pageSize).selectOption('a5');
+  await page.locator(orientation).selectOption('landscape');
+  await expect(page.locator(orientation)).toHaveValue('landscape');
+
+  const poemDownloadPromise = page.waitForEvent('download');
+  await page.getByTestId('button-export-pdf').click();
+  const poemDownload = await poemDownloadPromise;
+  const poemPdf = (await readFile(await poemDownload.path())).toString('latin1');
+  expect(poemPdf).toContain('/MediaBox [0 0 595.28 419.53]');
+  expect(poemPdf).not.toContain('/MediaBox [0 0 419.53 595.28]');
+
+  await page.locator('[data-testid^="button-export-book-"]').first().click();
+  await expect(page.locator(orientation).locator('option')).toHaveText(['Portrait', 'Landscape']);
+  await page.locator(pageSize).selectOption('a5');
+  await page.locator(orientation).selectOption('landscape');
+  await expect(page.locator(orientation)).toHaveValue('landscape');
+
+  const bookDownloadPromise = page.waitForEvent('download');
+  await page.getByTestId('button-download-book-pdf').click();
+  const bookDownload = await bookDownloadPromise;
+  const bookPdf = (await readFile(await bookDownload.path())).toString('latin1');
+  expect(bookPdf).toContain('/MediaBox [0 0 595.28 419.53]');
+  expect(bookPdf).not.toContain('/MediaBox [0 0 419.53 595.28]');
 });
