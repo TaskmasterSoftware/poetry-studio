@@ -352,6 +352,8 @@ function App() {
   const [revisionHistory, setRevisionHistory] = useState(() => readPoemRevisions(initialLibraryStore.activeDraftId));
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
   const [comparisonRevisionIds, setComparisonRevisionIds] = useState<[string, string]>(['', '']);
+  const [activeComparisonChangeIndices, setActiveComparisonChangeIndices] = useState<[number | null, number | null]>([null, null]);
+  const comparisonManuscriptRefs = useRef<Array<HTMLPreElement | null>>([]);
   const [openedSource, setOpenedSource] = useState(() => initialLibraryStore.drafts.find((draft) => draft.id === initialLibraryStore.activeDraftId)?.source ?? null);
   const editorRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
@@ -444,6 +446,9 @@ function App() {
     if (toast) { const timeout = window.setTimeout(() => setToast(''), 2600); return () => window.clearTimeout(timeout); }
     return undefined;
   }, [toast]);
+  useEffect(() => {
+    setActiveComparisonChangeIndices([null, null]);
+  }, [comparisonRevisionIds[0], comparisonRevisionIds[1]]);
 
   const text = useMemo(() => cleanText(html), [html]);
   const wordCount = wordsOf(text).length;
@@ -1525,10 +1530,29 @@ function App() {
     diffWords(line.text, line.peerText ?? '').left));
   const comparisonChangedWordCounts = comparisonWordDiffs.map((lines) =>
     lines.reduce((total, segments) => total + segments.filter((segment) => segment.isWord && segment.changed).length, 0));
+  const comparisonChangedLineIndices = alignedComparisonLines.map((lines) =>
+    lines.flatMap((line, index) => line.changed ? [index] : []));
   const comparisonTitlesMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
     && comparisonRevisions[0].title === comparisonRevisions[1].title);
   const comparisonManuscriptsMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
     && comparisonTexts[0] === comparisonTexts[1]);
+  const navigateComparisonChange = (slot: number, direction: -1 | 1) => {
+    const changedLineIndices = comparisonChangedLineIndices[slot];
+    if (!changedLineIndices.length) return;
+    const activePosition = changedLineIndices.indexOf(activeComparisonChangeIndices[slot] ?? -1);
+    const nextPosition = activePosition < 0
+      ? (direction > 0 ? 0 : changedLineIndices.length - 1)
+      : (activePosition + direction + changedLineIndices.length) % changedLineIndices.length;
+    const nextLineIndex = changedLineIndices[nextPosition];
+    setActiveComparisonChangeIndices((previous) => {
+      const next: [number | null, number | null] = [...previous];
+      next[slot] = nextLineIndex;
+      return next;
+    });
+    comparisonManuscriptRefs.current[slot]
+      ?.querySelector<HTMLElement>(`[data-change-index="${nextLineIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  };
 
   return (
     <div className={`studio ${isDark ? 'dark' : ''}`}>
@@ -1839,10 +1863,42 @@ function App() {
                           <p className="history-word-change-count" data-testid={`version-comparison-word-count-${slot + 1}`}>
                             {comparisonChangedWordCounts[slot]} {comparisonChangedWordCounts[slot] === 1 ? 'word' : 'words'} changed
                           </p>
-                          <pre className="history-diff-lines" data-testid={`version-comparison-manuscript-${slot + 1}`}>
+                          <div className="history-change-navigation" role="group" aria-label={`Changed lines in version ${slot + 1}`}>
+                            <button
+                              className="button"
+                              type="button"
+                              onClick={() => navigateComparisonChange(slot, -1)}
+                              disabled={!comparisonChangedLineIndices[slot].length}
+                              aria-label={`Previous change in version ${slot + 1}`}
+                              aria-controls={`version-comparison-manuscript-${slot + 1}`}
+                              data-testid={`button-previous-change-${slot + 1}`}
+                            >Previous</button>
+                            <span aria-live="polite" data-testid={`version-comparison-change-position-${slot + 1}`}>
+                              {activeComparisonChangeIndices[slot] === null
+                                ? `${comparisonChangedLineIndices[slot].length} ${comparisonChangedLineIndices[slot].length === 1 ? 'change' : 'changes'}`
+                                : `Change ${comparisonChangedLineIndices[slot].indexOf(activeComparisonChangeIndices[slot]) + 1} of ${comparisonChangedLineIndices[slot].length}`}
+                            </span>
+                            <button
+                              className="button"
+                              type="button"
+                              onClick={() => navigateComparisonChange(slot, 1)}
+                              disabled={!comparisonChangedLineIndices[slot].length}
+                              aria-label={`Next change in version ${slot + 1}`}
+                              aria-controls={`version-comparison-manuscript-${slot + 1}`}
+                              data-testid={`button-next-change-${slot + 1}`}
+                            >Next</button>
+                          </div>
+                          <pre
+                            className="history-diff-lines"
+                            id={`version-comparison-manuscript-${slot + 1}`}
+                            ref={(element) => { comparisonManuscriptRefs.current[slot] = element; }}
+                            data-testid={`version-comparison-manuscript-${slot + 1}`}
+                          >
                             {alignedComparisonLines[slot].map((line, lineIndex) => <span
-                              className={`history-diff-line ${line.changed ? 'changed' : ''}`}
+                              className={`history-diff-line ${line.changed ? 'changed' : ''} ${activeComparisonChangeIndices[slot] === lineIndex ? 'active-change' : ''}`}
                               key={`${line.lineNumber}-${lineIndex}`}
+                              data-change-index={line.changed ? lineIndex : undefined}
+                              aria-current={activeComparisonChangeIndices[slot] === lineIndex ? 'location' : undefined}
                             ><span className="history-line-number">{line.lineNumber}</span><span>{line.text
                               ? comparisonWordDiffs[slot][lineIndex].map((segment, segmentIndex) => segment.isWord
                                 ? <mark className={`history-diff-word ${segment.changed ? 'changed' : ''}`} key={segmentIndex}>{segment.text}</mark>

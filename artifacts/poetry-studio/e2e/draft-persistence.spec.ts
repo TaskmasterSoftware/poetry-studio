@@ -481,6 +481,23 @@ test('keeps comparison highlights aligned when lines are inserted and removed', 
   await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(2);
   await expect(newerVersion.locator('.history-diff-line.changed')).toContainText(['Inserted line', 'Revised ending']);
   await expect(olderVersion.locator('.history-diff-line.changed')).toContainText('Old ending');
+  const newerNextChange = page.getByTestId('button-next-change-1');
+  const newerPreviousChange = page.getByTestId('button-previous-change-1');
+  await newerNextChange.focus();
+  await page.keyboard.press('Enter');
+  await expect(newerVersion.locator('.history-diff-line.active-change')).toContainText('Inserted line');
+  await expect(page.getByTestId('version-comparison-change-position-1')).toHaveText('Change 1 of 2');
+  await page.keyboard.press('Enter');
+  await expect(newerVersion.locator('.history-diff-line.active-change')).toContainText('Revised ending');
+  await expect(olderVersion.locator('.history-diff-line.active-change')).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await expect(newerVersion.locator('.history-diff-line.active-change')).toContainText('Inserted line');
+  await newerPreviousChange.focus();
+  await page.keyboard.press('Space');
+  await expect(newerVersion.locator('.history-diff-line.active-change')).toContainText('Revised ending');
+  await page.getByTestId('button-next-change-2').click();
+  await expect(olderVersion.locator('.history-diff-line.active-change')).toContainText('Old ending');
+  await expect(newerVersion.locator('.history-diff-line.active-change')).toContainText('Revised ending');
   for (const pane of [newerVersion, olderVersion]) {
     await expect(pane.locator('.history-diff-line').filter({ hasText: 'Stable middle' })).not.toHaveClass(/changed/);
     await expect(pane.locator('.history-diff-line').filter({ hasText: 'Shared close' })).not.toHaveClass(/changed/);
@@ -493,6 +510,8 @@ test('keeps comparison highlights aligned when lines are inserted and removed', 
   await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(0);
   await expect(olderVersion.locator('.history-diff-line.changed')).toHaveCount(1);
   await expect(olderVersion.locator('.history-diff-line.changed')).toContainText('Inserted line');
+  await expect(page.getByTestId('button-next-change-1')).toBeDisabled();
+  await expect(page.getByTestId('version-comparison-change-position-1')).toHaveText('0 changes');
   for (const pane of [newerVersion, olderVersion]) {
     await expect(pane.locator('.history-diff-line').filter({ hasText: 'Stable middle' })).not.toHaveClass(/changed/);
     await expect(pane.locator('.history-diff-line').filter({ hasText: 'Revised ending' })).not.toHaveClass(/changed/);
