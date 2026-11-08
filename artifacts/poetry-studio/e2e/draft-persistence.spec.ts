@@ -351,3 +351,38 @@ test('confirms draft removal, switches safely, and keeps remaining drafts after 
   await expect(page.locator(titleInput)).toHaveValue('Untitled poem');
   await expect(page.locator(editor)).toBeEmpty();
 });
+
+test('keeps comparison highlights aligned when lines are inserted and removed', async ({ page }) => {
+  await page.goto('/');
+
+  await page.locator(titleInput).fill('Lines in motion');
+  await page.locator(editor).fill('Shared opening\nStable middle\nOld ending\nShared close');
+  await page.getByTestId('button-version-history').click();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.locator(editor).fill('Shared opening\nInserted line\nStable middle\nRevised ending\nShared close');
+  await page.getByTestId('button-version-history').click();
+
+  const newerVersion = page.getByTestId('version-comparison-manuscript-1');
+  const olderVersion = page.getByTestId('version-comparison-manuscript-2');
+  await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(2);
+  await expect(newerVersion.locator('.history-diff-line.changed')).toContainText(['Inserted line', 'Revised ending']);
+  await expect(olderVersion.locator('.history-diff-line.changed')).toContainText('Old ending');
+  for (const pane of [newerVersion, olderVersion]) {
+    await expect(pane.locator('.history-diff-line').filter({ hasText: 'Stable middle' })).not.toHaveClass(/changed/);
+    await expect(pane.locator('.history-diff-line').filter({ hasText: 'Shared close' })).not.toHaveClass(/changed/);
+  }
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.locator(editor).fill('Shared opening\nStable middle\nRevised ending\nShared close');
+  await page.getByTestId('button-version-history').click();
+
+  await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(0);
+  await expect(olderVersion.locator('.history-diff-line.changed')).toHaveCount(1);
+  await expect(olderVersion.locator('.history-diff-line.changed')).toContainText('Inserted line');
+  for (const pane of [newerVersion, olderVersion]) {
+    await expect(pane.locator('.history-diff-line').filter({ hasText: 'Stable middle' })).not.toHaveClass(/changed/);
+    await expect(pane.locator('.history-diff-line').filter({ hasText: 'Revised ending' })).not.toHaveClass(/changed/);
+    await expect(pane.locator('.history-diff-line').filter({ hasText: 'Shared close' })).not.toHaveClass(/changed/);
+  }
+});

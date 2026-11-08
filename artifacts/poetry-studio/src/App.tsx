@@ -245,6 +245,98 @@ function syllables(word: string) {
   const groups = clean.replace(/(?:[^laeiouy]e|ed|es)$/i, '').match(/[aeiouy]{1,2}/g);
   return Math.max(1, groups?.length || 1);
 }
+type AlignedComparisonLine = { text: string; lineNumber: number; peerText: string | null; changed: boolean };
+function alignComparisonLines(left: string[], right: string[]): [AlignedComparisonLine[], AlignedComparisonLine[]] {
+  const lcsLengths = (
+    leftStart: number,
+    leftEnd: number,
+    rightStart: number,
+    rightEnd: number,
+    reversed = false,
+  ) => {
+    const rightLength = rightEnd - rightStart;
+    let previous = new Uint32Array(rightLength + 1);
+    let current = new Uint32Array(rightLength + 1);
+    for (let leftOffset = 0; leftOffset < leftEnd - leftStart; leftOffset += 1) {
+      current[0] = 0;
+      const leftLine = left[reversed ? leftEnd - leftOffset - 1 : leftStart + leftOffset];
+      for (let rightOffset = 0; rightOffset < rightLength; rightOffset += 1) {
+        const rightLine = right[reversed ? rightEnd - rightOffset - 1 : rightStart + rightOffset];
+        current[rightOffset + 1] = leftLine === rightLine
+          ? previous[rightOffset] + 1
+          : Math.max(previous[rightOffset + 1], current[rightOffset]);
+      }
+      [previous, current] = [current, previous];
+    }
+    return previous;
+  };
+
+  const matches: Array<[number, number]> = [];
+  const collectMatches = (leftStart: number, leftEnd: number, rightStart: number, rightEnd: number) => {
+    const leftLength = leftEnd - leftStart;
+    const rightLength = rightEnd - rightStart;
+    if (!leftLength || !rightLength) return;
+    if (leftLength === 1) {
+      const rightIndex = right.slice(rightStart, rightEnd).indexOf(left[leftStart]);
+      if (rightIndex >= 0) matches.push([leftStart, rightStart + rightIndex]);
+      return;
+    }
+    if (rightLength === 1) {
+      const leftIndex = left.slice(leftStart, leftEnd).indexOf(right[rightStart]);
+      if (leftIndex >= 0) matches.push([leftStart + leftIndex, rightStart]);
+      return;
+    }
+
+    const leftMiddle = leftStart + Math.floor(leftLength / 2);
+    const forward = lcsLengths(leftStart, leftMiddle, rightStart, rightEnd);
+    const backward = lcsLengths(leftMiddle, leftEnd, rightStart, rightEnd, true);
+    let rightMiddle = 0;
+    let longest = -1;
+    for (let split = 0; split <= rightLength; split += 1) {
+      const length = forward[split] + backward[rightLength - split];
+      if (length > longest) {
+        longest = length;
+        rightMiddle = split;
+      }
+    }
+    collectMatches(leftStart, leftMiddle, rightStart, rightStart + rightMiddle);
+    collectMatches(leftMiddle, leftEnd, rightStart + rightMiddle, rightEnd);
+  };
+  collectMatches(0, left.length, 0, right.length);
+
+  const alignedLeft: AlignedComparisonLine[] = [];
+  const alignedRight: AlignedComparisonLine[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  const appendGap = (leftEnd: number, rightEnd: number) => {
+    const pairedCount = Math.min(leftEnd - leftIndex, rightEnd - rightIndex);
+    for (let offset = 0; offset < pairedCount; offset += 1) {
+      const leftText = left[leftIndex + offset];
+      const rightText = right[rightIndex + offset];
+      const changed = leftText !== rightText;
+      alignedLeft.push({ text: leftText, lineNumber: leftIndex + offset + 1, peerText: rightText, changed });
+      alignedRight.push({ text: rightText, lineNumber: rightIndex + offset + 1, peerText: leftText, changed });
+    }
+    for (let index = leftIndex + pairedCount; index < leftEnd; index += 1) {
+      alignedLeft.push({ text: left[index], lineNumber: index + 1, peerText: null, changed: true });
+    }
+    for (let index = rightIndex + pairedCount; index < rightEnd; index += 1) {
+      alignedRight.push({ text: right[index], lineNumber: index + 1, peerText: null, changed: true });
+    }
+    leftIndex = leftEnd;
+    rightIndex = rightEnd;
+  };
+
+  for (const [matchedLeft, matchedRight] of matches) {
+    appendGap(matchedLeft, matchedRight);
+    alignedLeft.push({ text: left[matchedLeft], lineNumber: matchedLeft + 1, peerText: right[matchedRight], changed: false });
+    alignedRight.push({ text: right[matchedRight], lineNumber: matchedRight + 1, peerText: left[matchedLeft], changed: false });
+    leftIndex = matchedLeft + 1;
+    rightIndex = matchedRight + 1;
+  }
+  appendGap(left.length, right.length);
+  return [alignedLeft, alignedRight];
+}
 function App() {
   const [initialLibraryStore] = useState(loadBrowserLibraryStore);
   const [books, setBooks] = useState(initialLibraryStore.books);
@@ -1305,8 +1397,9 @@ function App() {
   const comparisonRevisions = comparisonRevisionIds.map((id) => revisionHistory.find((revision) => revision.id === id) ?? null);
   const comparisonTexts = comparisonRevisions.map((revision) => revision ? cleanText(revision.editorHtml) : '');
   const comparisonLines = comparisonTexts.map((text) => text.split('\n'));
-  const comparisonWordDiffs = comparisonLines.map((lines, slot) => lines.map((line, lineIndex) =>
-    diffWords(line, comparisonLines[1 - slot][lineIndex] ?? '').left));
+  const alignedComparisonLines = alignComparisonLines(comparisonLines[0], comparisonLines[1]);
+  const comparisonWordDiffs = alignedComparisonLines.map((lines) => lines.map((line) =>
+    diffWords(line.text, line.peerText ?? '').left));
   const comparisonTitlesMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
     && comparisonRevisions[0].title === comparisonRevisions[1].title);
   const comparisonManuscriptsMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
@@ -1590,10 +1683,10 @@ function App() {
                           <h3 className={!comparisonTitlesMatch ? 'changed' : ''}>{revision!.title || 'Untitled poem'}</h3>
                           <div className="history-manuscript-label field-label">Manuscript</div>
                           <pre className="history-diff-lines" data-testid={`version-comparison-manuscript-${slot + 1}`}>
-                            {comparisonLines[slot].map((line, lineIndex) => <span
-                              className={`history-diff-line ${line !== comparisonLines[1 - slot][lineIndex] ? 'changed' : ''}`}
-                              key={lineIndex}
-                            ><span className="history-line-number">{lineIndex + 1}</span><span>{line
+                            {alignedComparisonLines[slot].map((line, lineIndex) => <span
+                              className={`history-diff-line ${line.changed ? 'changed' : ''}`}
+                              key={`${line.lineNumber}-${lineIndex}`}
+                            ><span className="history-line-number">{line.lineNumber}</span><span>{line.text
                               ? comparisonWordDiffs[slot][lineIndex].map((segment, segmentIndex) => segment.isWord
                                 ? <mark className={`history-diff-word ${segment.changed ? 'changed' : ''}`} key={segmentIndex}>{segment.text}</mark>
                                 : <span key={segmentIndex}>{segment.text}</span>)
