@@ -6,6 +6,7 @@ import {
   RotateCcw, Save, Settings2, SpellCheck, Strikethrough, Sun, Trash2, Type, Underline, Undo2, X,
 } from 'lucide-react';
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
+import BookPagesEditor from './components/BookPagesEditor';
 import FormCheckPanel from './components/FormCheckPanel';
 import PoemMetadataPanel from './components/PoemMetadataPanel';
 import { analyzeBrowserMeter, type BrowserMeterEstimate } from './lib/browser-meter';
@@ -24,6 +25,7 @@ import {
   type BrowserPoemDraft, type BrowserPoemRevision, type PdfExportOptions, type PoemFileFormat, type PoemMetadata, type WritablePoemFileFormat, type WritablePoemFileHandle,
 } from './lib/poem-files';
 import { diffWords } from './lib/version-diff';
+import { bookPageKinds, createBookMatterPage, normalizeBookPages, type BookMatterPage, type BookPageType } from './lib/book-pages';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion' | 'metadata';
 
@@ -378,9 +380,10 @@ function App() {
   const [isCheckingForm, setIsCheckingForm] = useState(false);
   const [proofOn, setProofOn] = useState(settings.proof);
   const [dismissed, setDismissed] = useState<string[]>([]);
-  const [modal, setModal] = useState<'export' | 'settings' | 'history' | 'book-export' | 'remove-draft' | null>(null);
+  const [modal, setModal] = useState<'export' | 'settings' | 'history' | 'book-export' | 'book-pages' | 'remove-draft' | null>(null);
   const [draftToRemoveId, setDraftToRemoveId] = useState('');
   const [bookExportId, setBookExportId] = useState('');
+  const [bookPagesId, setBookPagesId] = useState('');
   const [toast, setToast] = useState('');
   const [savedAt, setSavedAt] = useState(() => openedSource ? 'Draft restored · updated copy available' : 'All changes saved');
   const [dirty, setDirty] = useState(false);
@@ -464,6 +467,7 @@ function App() {
     metadata: normalizePoemMetadata(draft.metadata),
   }));
   const bookToExport = books.find((book) => book.id === bookExportId);
+  const bookToEditPages = books.find((book) => book.id === bookPagesId);
   const scanTextLines = text.split('\n');
   const countedLineEntries = scanTextLines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim());
   const query = (rhymeQuery || selection.split(/\s+/).filter(Boolean).pop() || '').replace(/[^\p{L}'-]/gu, '');
@@ -670,6 +674,63 @@ function App() {
     setBooks(nextBooks);
     localStorage.setItem(booksStorageKey, JSON.stringify(nextBooks));
   }, []);
+
+  const updateBookPage = useCallback((bookId: string, pageId: string, changes: Partial<Omit<BookMatterPage, 'id'>>) => {
+    const book = booksRef.current.find((item) => item.id === bookId);
+    if (!book) return;
+    const pages = book.pages.map((page) => page.id === pageId ? { ...page, ...changes } : page);
+    persistBookList(booksRef.current.map((item) => item.id === bookId ? { ...item, pages } : item));
+  }, [persistBookList]);
+
+  const addBookPage = useCallback((bookId: string, type: BookPageType) => {
+    const book = booksRef.current.find((item) => item.id === bookId);
+    if (!book) return;
+    if (book.pages.length >= 80) {
+      setToast('A book can contain up to 80 custom pages.');
+      return;
+    }
+    const page = createBookMatterPage(type, createDraftId(), book.title);
+    const kindOrder = (pageType: BookPageType) => bookPageKinds.findIndex((kind) => kind.type === pageType);
+    const targetOrder = kindOrder(page.type);
+    const firstLaterKind = book.pages.findIndex((existing) =>
+      existing.section === page.section && kindOrder(existing.type) > targetOrder,
+    );
+    const sameSectionIndexes = book.pages
+      .map((existing, index) => existing.section === page.section ? index : -1)
+      .filter((index) => index >= 0);
+    let insertAt = sameSectionIndexes.length ? sameSectionIndexes[sameSectionIndexes.length - 1] + 1 : book.pages.length;
+    if (firstLaterKind >= 0) insertAt = firstLaterKind;
+    else if (!sameSectionIndexes.length && page.section === 'before-contents') insertAt = 0;
+    else if (!sameSectionIndexes.length && page.section === 'after-contents') {
+      const backMatterIndex = book.pages.findIndex((existing) => existing.section === 'back-matter');
+      insertAt = backMatterIndex < 0 ? book.pages.length : backMatterIndex;
+    }
+    const pages = [...book.pages];
+    pages.splice(insertAt, 0, page);
+    persistBookList(booksRef.current.map((item) => item.id === bookId ? { ...item, pages } : item));
+  }, [persistBookList]);
+
+  const moveBookPage = useCallback((bookId: string, pageId: string, direction: 'up' | 'down') => {
+    const book = booksRef.current.find((item) => item.id === bookId);
+    if (!book) return;
+    const pages = [...book.pages];
+    const pageIndex = pages.findIndex((page) => page.id === pageId);
+    if (pageIndex < 0) return;
+    const sectionIndexes = pages.map((page, index) => page.section === pages[pageIndex].section ? index : -1).filter((index) => index >= 0);
+    const sectionPosition = sectionIndexes.indexOf(pageIndex);
+    const targetIndex = sectionIndexes[sectionPosition + (direction === 'up' ? -1 : 1)];
+    if (targetIndex === undefined) return;
+    [pages[pageIndex], pages[targetIndex]] = [pages[targetIndex], pages[pageIndex]];
+    persistBookList(booksRef.current.map((item) => item.id === bookId ? { ...item, pages } : item));
+  }, [persistBookList]);
+
+  const removeBookPage = useCallback((bookId: string, pageId: string) => {
+    const book = booksRef.current.find((item) => item.id === bookId);
+    if (!book) return;
+    persistBookList(booksRef.current.map((item) => item.id === bookId
+      ? { ...item, pages: item.pages.filter((page) => page.id !== pageId) }
+      : item));
+  }, [persistBookList]);
 
   const updateDraft = useCallback((draftId: string, changes: Partial<Omit<BrowserPoemDraft, 'id'>>) => {
     const targetDraftId = conflictRedirectsRef.current.get(draftId) ?? draftId;
@@ -884,6 +945,7 @@ function App() {
       id: createDraftId(),
       title: 'Untitled book',
       createdAt: new Date().toISOString(),
+      pages: [],
     };
     const draft: BrowserPoemDraft = {
       id: createDraftId(),
@@ -939,6 +1001,11 @@ function App() {
     setModal('book-export');
   }, []);
 
+  const openBookPages = useCallback((bookId: string) => {
+    setBookPagesId(bookId);
+    setModal('book-pages');
+  }, []);
+
   const beginBookImport = useCallback(() => {
     persistNow();
     bookInputRef.current?.click();
@@ -954,6 +1021,7 @@ function App() {
         id: createDraftId(),
         title: imported.title,
         createdAt: new Date().toISOString(),
+        pages: normalizeBookPages(imported.pages),
       };
       const importedDrafts: BrowserPoemDraft[] = imported.poems.map((poem) => ({
         id: createDraftId(),
@@ -1308,7 +1376,7 @@ function App() {
           text: cleanText(draft.editorHtml),
           editorHtml: draft.editorHtml,
         }));
-      const content = serializeBookPdf(bookToExport.title, poems, pdfExportOptions);
+      const content = serializeBookPdf(bookToExport.title, poems, pdfExportOptions, bookToExport.pages);
       const slug = bookToExport.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'poetry-book';
       downloadPoemFile(`${slug}.pdf`, content, 'pdf');
       setModal(null);
@@ -1321,7 +1389,7 @@ function App() {
     if (!bookToExport) return;
     try {
       const poems = drafts.filter((draft) => draft.bookId === bookToExport.id);
-      downloadBookBundle(bookToExport.title, serializeBookBundle(bookToExport.title, poems));
+      downloadBookBundle(bookToExport.title, serializeBookBundle(bookToExport.title, poems, bookToExport.pages));
       setModal(null);
       setToast(`Exported ${bookToExport.title} book file`);
     } catch (error) {
@@ -1486,6 +1554,7 @@ function App() {
           onMovePoem={movePoem}
           onReorderPoem={reorderPoem}
           onExportBook={openBookExport}
+          onEditBookPages={openBookPages}
           onImportBook={beginBookImport}
         />
         <div className="side-foot"><div className="side-note">A quiet place for unfinished things.<br/>Your work stays on this device.</div></div>
@@ -1707,12 +1776,19 @@ function App() {
         </div>
       </main>
       {modal && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
-          <div className={`dialog ${modal === 'history' ? 'history-dialog' : ''}`} role={modal === 'remove-draft' ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="dialog-title">
-          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : modal === 'remove-draft' ? 'Remove this poem?' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : modal === 'remove-draft' ? 'This removes the browser draft and its saved versions from this device.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
+          <div className={`dialog ${modal === 'history' ? 'history-dialog' : ''} ${modal === 'book-pages' ? 'book-pages-dialog' : ''}`} role={modal === 'remove-draft' ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="dialog-title">
+          <div className="dialog-head"><div><h2 id="dialog-title">{modal === 'export' ? 'Take the poem with you' : modal === 'history' ? 'Earlier versions' : modal === 'book-export' ? `Export ${bookToExport?.title || 'book'}` : modal === 'book-pages' ? `Pages in ${bookToEditPages?.title || 'book'}` : modal === 'remove-draft' ? 'Remove this poem?' : 'Studio settings'}</h2><p>{modal === 'export' ? 'Choose a simple, portable format.' : modal === 'history' ? 'Preview and restore a saved title and manuscript.' : modal === 'book-export' ? 'Download a reading copy or a reusable Poetry Studio book file.' : modal === 'book-pages' ? 'Add and edit front matter, optional pages, and back matter for the printed book.' : modal === 'remove-draft' ? 'This removes the browser draft and its saved versions from this device.' : 'Tune the page to your way of working.'}</p></div><button className="modal-x" onClick={() => setModal(null)} aria-label="Close dialog"><X/></button></div>
           {modal === 'remove-draft' ? <><div className="panel-card"><p style={{ margin: 0 }}>Remove <strong>{drafts.find((draft) => draft.id === draftToRemoveId)?.title || 'Untitled poem'}</strong>? This cannot be undone.</p></div><div className="dialog-foot"><button className="button" onClick={() => { setDraftToRemoveId(''); setModal(null); }} data-testid="button-cancel-remove-draft">Keep poem</button><button className="button primary" onClick={removeDraft} data-testid="button-confirm-remove-draft"><Trash2/>Remove poem</button></div></> :
+          modal === 'book-pages' ? <>{bookToEditPages ? <BookPagesEditor
+              book={bookToEditPages}
+              onAddPage={(type) => addBookPage(bookToEditPages.id, type)}
+              onUpdatePage={(pageId, changes) => updateBookPage(bookToEditPages.id, pageId, changes)}
+              onMovePage={(pageId, direction) => moveBookPage(bookToEditPages.id, pageId, direction)}
+              onRemovePage={(pageId) => removeBookPage(bookToEditPages.id, pageId)}
+            /> : <div className="panel-card"><p>This book is no longer available.</p></div>}<div className="dialog-foot"><button className="button primary" onClick={() => setModal(null)}>Done</button></div></> :
           modal === 'book-export' ? <><div className="panel-card">
-              <div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Download as PDF</strong><p>Includes a contents page with poem starting pages. Each poem starts on a new page; long poems continue onto additional pages.</p>{renderPdfExportOptions()}<button className="button primary" style={{ marginTop: 10 }} onClick={exportBookAsPdf} data-testid="button-download-book-pdf"><Download/>Download book PDF</button></div>
-              <div className="form-item"><strong>Export book file</strong><p>Save a .poetrybook copy you can import later, including poem text and supported styling.</p><button className="button" style={{ marginTop: 10 }} onClick={exportBookArchive} data-testid="button-export-book-file"><Download/>Export .poetrybook</button></div>
+              <div className="form-item" style={{ border: 0, paddingTop: 0 }}><strong>Download as PDF</strong><p>Includes a contents page, your added book pages, and blank pages where needed to place recto or verso sections correctly. The first poem begins on a right-hand page; each poem starts on a fresh page.</p>{renderPdfExportOptions()}<button className="button primary" style={{ marginTop: 10 }} onClick={exportBookAsPdf} data-testid="button-download-book-pdf"><Download/>Download book PDF</button></div>
+              <div className="form-item"><strong>Export book file</strong><p>Save a .poetrybook copy you can import later, including poems, book pages, and supported styling.</p><button className="button" style={{ marginTop: 10 }} onClick={exportBookArchive} data-testid="button-export-book-file"><Download/>Export .poetrybook</button></div>
             </div><div className="dialog-foot"><button className="button" onClick={() => setModal(null)}>Done</button></div></> :
           modal === 'history' ? <><div className="history-layout">
               <div className="history-list" aria-label="Saved versions">

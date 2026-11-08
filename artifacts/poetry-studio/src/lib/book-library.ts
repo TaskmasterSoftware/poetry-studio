@@ -2,11 +2,13 @@ import {
   isSavedPoemSource, normalizePoemMetadata,
   type BrowserPoemDraft, type PoemMetadata, type SavedPoemSource,
 } from "./poem-files";
+import { normalizeBookPages, type BookMatterPage } from "./book-pages";
 
 export interface BrowserPoemBook {
   id: string;
   title: string;
   createdAt: string;
+  pages: BookMatterPage[];
 }
 
 export interface BookShelfPoem {
@@ -18,11 +20,12 @@ export interface BookShelfPoem {
 
 export interface ImportedPoemBook {
   title: string;
+  pages: BookMatterPage[];
   poems: BookShelfPoem[];
 }
 
 const bookBundleFormat = "poetry-studio-book";
-const bookBundleVersion = 1;
+const bookBundleVersion = 2;
 const maxBookBundleBytes = 25 * 1024 * 1024;
 const allowedTags = new Set([
   "B", "BLOCKQUOTE", "BR", "CODE", "DEL", "DIV", "EM", "H1", "H2", "H3",
@@ -137,11 +140,13 @@ export function normalizeBookLibrary(
   const uniqueBooks = new Map<string, BrowserPoemBook>();
   if (Array.isArray(savedBooks)) {
     for (const value of savedBooks) {
-      if (isBrowserPoemBook(value) && !uniqueBooks.has(value.id)) uniqueBooks.set(value.id, value);
+      if (isBrowserPoemBook(value) && !uniqueBooks.has(value.id)) {
+        uniqueBooks.set(value.id, { ...value, pages: normalizeBookPages(value.pages) });
+      }
     }
   }
   if (!uniqueBooks.size) {
-    const book = { id: createId(), title: "My Poems", createdAt: new Date().toISOString() };
+    const book = { id: createId(), title: "My Poems", createdAt: new Date().toISOString(), pages: [] };
     uniqueBooks.set(book.id, book);
   }
   const books = Array.from(uniqueBooks.values());
@@ -155,12 +160,12 @@ export function normalizeBookLibrary(
   return { books, drafts: normalizedDrafts, activeBookId };
 }
 
-export function serializeBookBundle(bookTitle: string, drafts: BrowserPoemDraft[]) {
+export function serializeBookBundle(bookTitle: string, drafts: BrowserPoemDraft[], pages: BookMatterPage[] = []) {
   if (!drafts.length) throw new Error("Add at least one poem before exporting this book.");
   const bundle = {
     format: bookBundleFormat,
     version: bookBundleVersion,
-    book: { title: bookTitle.trim() || "Untitled book" },
+    book: { title: bookTitle.trim() || "Untitled book", pages: normalizeBookPages(pages) },
     poems: drafts.map((draft) => ({
       title: draft.title,
       editorHtml: sanitizeBookEditorHtml(draft.editorHtml),
@@ -186,10 +191,10 @@ export async function readBookBundle(file: File): Promise<ImportedPoemBook> {
   const value = bundle as {
     format?: unknown;
     version?: unknown;
-    book?: { title?: unknown };
+    book?: { title?: unknown; pages?: unknown };
     poems?: unknown;
   };
-  if (value.format !== bookBundleFormat || value.version !== bookBundleVersion) {
+  if (value.format !== bookBundleFormat || (value.version !== 1 && value.version !== bookBundleVersion)) {
     throw new Error("This book file was created by an unsupported version of Poetry Studio.");
   }
   if (typeof value.book?.title !== "string" || !Array.isArray(value.poems)) {
@@ -212,7 +217,11 @@ export async function readBookBundle(file: File): Promise<ImportedPoemBook> {
     };
   });
 
-  return { title: value.book.title.trim() || "Untitled book", poems };
+  return {
+    title: value.book.title.trim() || "Untitled book",
+    pages: value.version === 1 ? [] : normalizeBookPages(value.book.pages),
+    poems,
+  };
 }
 
 export function downloadBookBundle(bookTitle: string, content: string) {

@@ -33,6 +33,7 @@ export type BookShelfProps = {
   onMovePoem: (poemId: string, bookId: string) => void;
   onReorderPoem: (poemId: string, direction: PoemOrderDirection) => void;
   onExportBook: (bookId: string) => void;
+  onEditBookPages: (bookId: string) => void;
   onImportBook: () => void;
 };
 
@@ -48,6 +49,7 @@ export default function BookShelf({
   onMovePoem,
   onReorderPoem,
   onExportBook,
+  onEditBookPages,
   onImportBook,
 }: BookShelfProps) {
   const [renamingBookId, setRenamingBookId] = useState('');
@@ -233,6 +235,14 @@ export default function BookShelf({
                         title="Rename book"
                         data-testid={`button-rename-book-${book.id}`}
                       ><Pencil aria-hidden="true" /></button>
+                      <button
+                        className="book-tool"
+                        type="button"
+                        onClick={() => onEditBookPages(book.id)}
+                        aria-label={`Edit pages in ${book.title}`}
+                        title="Edit book pages"
+                        data-testid={`button-edit-book-pages-${book.id}`}
+                      ><BookOpen aria-hidden="true" /></button>
                       <button
                         className="book-tool"
                         type="button"

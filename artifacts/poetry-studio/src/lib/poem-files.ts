@@ -2,6 +2,7 @@ import {
   getEditorParagraphs, markdownIndentColumns, readDocx, readOdt, readRtf, serializeDocx, serializeOdt, serializeRtf,
   type ExportInlineStyle, type ExportRun,
 } from './document-import';
+import type { BookMatterPage, BookPageSide } from './book-pages';
 
 export type WritablePoemFileFormat = 'txt' | 'md' | 'html' | 'rtf' | 'docx' | 'odt';
 export type PoemFileFormat = WritablePoemFileFormat;
@@ -753,22 +754,123 @@ function buildBookPdf(
   bookTitle: string,
   poems: { title: string; text: string; editorHtml?: string }[],
   options: PdfExportOptions,
+  bookPages: BookMatterPage[] = [],
 ) {
   const layout = pdfLayout(options);
-  const pages: string[][] = [[]];
+  const pages: string[][] = [];
   const poemStartPages: number[] = [];
-  let y = layout.height - layout.margin;
-  const addPage = () => {
+  const appendPage = (side: BookPageSide = 'either') => {
+    const nextPageNumber = pages.length + 1;
+    if ((side === 'recto' && nextPageNumber % 2 === 0)
+      || (side === 'verso' && nextPageNumber % 2 === 1)) pages.push([]);
     pages.push([]);
-    y = layout.height - layout.margin;
+    return pages.length - 1;
   };
-  const addText = (value: string, font: 'F1' | 'F2', size: number) => {
-    pages[pages.length - 1].push(`BT /${font} ${size} Tf ${layout.margin} ${y} Td <${winAnsiHex(value)}> Tj ET`);
+  const appendContinuationPage = () => pages.push([]);
+  const textX = (value: string, size: number, alignment: BookMatterPage['alignment']) => {
+    const textWidth = approximatePdfTextWidth(value, size);
+    if (alignment === 'center') return layout.margin + Math.max(0, (layout.contentWidth - textWidth) / 2);
+    if (alignment === 'right') return layout.width - layout.margin - textWidth;
+    return layout.margin;
+  };
+  const appendMatterPage = (page: BookMatterPage) => {
+    appendPage(page.side);
+    const centeredOpening = ['half-title', 'frontispiece', 'title-page', 'dedication', 'epigraph'].includes(page.type);
+    const isHalfTitle = page.type === 'half-title';
+    const isTitlePage = page.type === 'title-page';
+    const titleY = isHalfTitle
+      ? layout.height * 0.58
+      : isTitlePage
+        ? layout.height * 0.64
+        : centeredOpening
+          ? layout.height * 0.65
+          : layout.height - layout.margin - 24;
+    const title = page.title.trim();
+    let y = title ? titleY : centeredOpening ? layout.height * 0.56 : layout.height - layout.margin;
+    if (title) {
+      const titleSize = isHalfTitle ? 20 : isTitlePage ? 24 : 16;
+      for (const line of wrapPdfLine(title, layout.titleCharacters)) {
+        pages[pages.length - 1].push(
+          `BT /F2 ${titleSize} Tf ${textX(line, titleSize, page.alignment)} ${y} Td <${winAnsiHex(line)}> Tj ET`,
+        );
+        y -= titleSize + 8;
+      }
+      y -= isTitlePage ? 28 : 14;
+    }
+
+    const bodyFont = page.type === 'epigraph' ? 'F3' : 'F1';
+    const bodySize = page.type === 'copyright' || page.type === 'colophon' ? 9 : 11;
+    const bodyLines = page.content.replace(/\r\n?/g, '\n').split('\n')
+      .flatMap((line) => line ? wrapPdfLine(line, layout.bodyCharacters) : ['']);
+    for (const line of bodyLines) {
+      if (!line) {
+        y -= 12;
+        continue;
+      }
+      if (y < layout.margin) {
+        appendContinuationPage();
+        y = layout.height - layout.margin;
+      }
+      pages[pages.length - 1].push(
+        `BT /${bodyFont} ${bodySize} Tf ${textX(line, bodySize, page.alignment)} ${y} Td <${winAnsiHex(line)}> Tj ET`,
+      );
+      y -= 15;
+    }
+  };
+
+  const frontBeforeContents = bookPages.filter((page) => page.section === 'before-contents');
+  const frontAfterContents = bookPages.filter((page) => page.section === 'after-contents');
+  const backMatter = bookPages.filter((page) => page.section === 'back-matter');
+  frontBeforeContents.forEach(appendMatterPage);
+
+  const contentsLineItems: { poemIndex: number; line: string; pageIndex: number; y: number; lastLine: boolean }[] = [];
+  let contentsPageIndex = 0;
+  let contentsY = layout.height - layout.margin - 35;
+  const startContentsPage = () => {
+    contentsPageIndex += 1;
+    contentsY = layout.height - layout.margin - 35;
   };
 
   poems.forEach((poem, poemIndex) => {
-    if (poemIndex > 0) addPage();
-    poemStartPages.push(pages.length);
+    const title = poem.title.trim() || 'Untitled poem';
+    const titleLines = wrapPdfLine(title, Math.max(1, layout.bodyCharacters - 8));
+    titleLines.forEach((line, lineIndex) => {
+      if (contentsY < layout.margin) startContentsPage();
+      contentsLineItems.push({
+        poemIndex,
+        line,
+        pageIndex: contentsPageIndex,
+        y: contentsY,
+        lastLine: lineIndex === titleLines.length - 1,
+      });
+      contentsY -= 15;
+    });
+    contentsY -= 8;
+  });
+
+  const contentsPageCount = contentsPageIndex + 1;
+  const contentsPageIndexes: number[] = [];
+  for (let pageIndex = 0; pageIndex < contentsPageCount; pageIndex += 1) {
+    const pageNumber = appendPage(pageIndex === 0 ? 'recto' : 'either');
+    contentsPageIndexes.push(pageNumber);
+    const commands = pages[pageNumber];
+    const heading = pageIndex === 0 ? 'Contents' : 'Contents (continued)';
+    commands.push(`BT /F2 20 Tf ${layout.margin} ${layout.height - layout.margin} Td <${winAnsiHex(heading)}> Tj ET`);
+  }
+
+  frontAfterContents.forEach(appendMatterPage);
+
+  poems.forEach((poem, poemIndex) => {
+    appendPage(poemIndex === 0 ? 'recto' : 'either');
+    poemStartPages.push(pages.length - 1);
+    let y = layout.height - layout.margin;
+    const addPage = () => {
+      appendContinuationPage();
+      y = layout.height - layout.margin;
+    };
+    const addText = (value: string, font: 'F1' | 'F2', size: number) => {
+      pages[pages.length - 1].push(`BT /${font} ${size} Tf ${layout.margin} ${y} Td <${winAnsiHex(value)}> Tj ET`);
+    };
     for (const line of wrapPdfLine(bookTitle.trim() || 'Untitled book', layout.bodyCharacters)) {
       if (y < layout.margin + 12) addPage();
       addText(line, 'F1', 9);
@@ -821,44 +923,13 @@ function buildBookPdf(
     }
   });
 
-  const contentsLineItems: { poemIndex: number; line: string; pageIndex: number; y: number; lastLine: boolean }[] = [];
-  let contentsPageIndex = 0;
-  let contentsY = layout.height - layout.margin;
-  const startContentsPage = () => {
-    contentsPageIndex += 1;
-    contentsY = layout.height - layout.margin;
-    contentsY -= 35;
-  };
-  contentsY -= 35;
+  backMatter.forEach(appendMatterPage);
 
-  poems.forEach((poem, poemIndex) => {
-    const title = poem.title.trim() || 'Untitled poem';
-    const titleLines = wrapPdfLine(title, Math.max(1, layout.bodyCharacters - 8));
-    titleLines.forEach((line, lineIndex) => {
-      if (contentsY < layout.margin) startContentsPage();
-      contentsLineItems.push({
-        poemIndex,
-        line,
-        pageIndex: contentsPageIndex,
-        y: contentsY,
-        lastLine: lineIndex === titleLines.length - 1,
-      });
-      contentsY -= 15;
-    });
-    contentsY -= 8;
-  });
-
-  const contentsPageCount = contentsPageIndex + 1;
-  const contentsPages: string[][] = Array.from({ length: contentsPageCount }, () => []);
-  contentsPages.forEach((commands, pageIndex) => {
-    const heading = pageIndex === 0 ? 'Contents' : 'Contents (continued)';
-    commands.push(`BT /F2 20 Tf ${layout.margin} ${layout.height - layout.margin} Td <${winAnsiHex(heading)}> Tj ET`);
-  });
   contentsLineItems.forEach((item) => {
-    const commands = contentsPages[item.pageIndex];
+    const commands = pages[contentsPageIndexes[item.pageIndex]];
     commands.push(`BT /F1 11 Tf ${layout.margin} ${item.y} Td <${winAnsiHex(item.line)}> Tj ET`);
     if (item.lastLine) {
-      const pageNumber = contentsPageCount + poemStartPages[item.poemIndex];
+      const pageNumber = poemStartPages[item.poemIndex] + 1;
       const pageNumberX = layout.width - layout.margin - approximatePdfTextWidth(String(pageNumber), 11);
       commands.push(
         `BT /F1 11 Tf ${pageNumberX} ${item.y} Td <${winAnsiHex(String(pageNumber))}> Tj ET`,
@@ -866,7 +937,7 @@ function buildBookPdf(
     }
   });
 
-  return assemblePdf(bookTitle, [...contentsPages, ...pages], options);
+  return assemblePdf(bookTitle, pages, options);
 }
 
 export function serializePoemPdf(
@@ -882,9 +953,10 @@ export function serializeBookPdf(
   bookTitle: string,
   poems: { title: string; text: string; editorHtml?: string }[],
   options: PdfExportOptions = defaultPdfExportOptions,
+  bookPages: BookMatterPage[] = [],
 ) {
   if (!poems.length) throw new Error('Add at least one poem before downloading this book.');
-  return new Blob([buildBookPdf(bookTitle, poems, options)], { type: 'application/pdf' });
+  return new Blob([buildBookPdf(bookTitle, poems, options, bookPages)], { type: 'application/pdf' });
 }
 
 export function downloadPoemFile(fileName: string, content: string | Blob, format: DownloadablePoemFileFormat) {

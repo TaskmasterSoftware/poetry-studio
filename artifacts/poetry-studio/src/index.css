@@ -246,9 +246,34 @@
 .overlay { position:fixed; inset:0; background:#243b35a8; display:grid; place-items:center; padding:18px; z-index:20; }
 .dialog { width:min(540px,100%); max-height:min(680px,90dvh); overflow:auto; background:#f9f7f0; border:1px solid #d8d7cc; border-radius:9px; box-shadow:0 24px 80px #1b2f2933; padding:22px; animation:rise .2s ease-out; }
 .dialog.history-dialog { width:min(940px,100%); }
+.dialog.book-pages-dialog { width:min(860px,100%); }
 .dialog-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:18px; }
 .dialog-head h2 { margin:0; font:500 22px var(--app-font-serif); color:#334a43; }
 .dialog-head p { margin:5px 0 0; color:#829087; font-size:11px; }
+.book-pages-editor { display:grid; gap:14px; }
+.book-pages-guidance { padding:10px 12px; border:1px solid #e5e2d7; border-radius:6px; background:#f4f2e9; color:#748078; font-size:10px; line-height:1.55; }
+.book-pages-add { display:flex; gap:10px; align-items:flex-end; }
+.book-pages-add label { display:grid; flex:1; gap:5px; }
+.book-pages-add select,.book-page-settings select,.book-page-field input,.book-page-field textarea { width:100%; border:1px solid #dedbd0; border-radius:5px; padding:8px 9px; background:#fffefa; color:#334a43; font-size:11px; }
+.book-pages-section { display:grid; gap:8px; }
+.book-pages-section h3 { display:flex; align-items:center; gap:8px; margin:4px 0 0; color:#496156; font:500 14px var(--app-font-serif); }
+.book-pages-section h3 span { display:grid; place-items:center; width:18px; height:18px; border-radius:50%; background:#e9ece2; color:#7e8a7d; font:9px var(--app-font-mono); }
+.book-page-card { display:grid; gap:10px; padding:12px; border:1px solid #e4e1d6; border-radius:6px; background:#fffefa; }
+.book-page-card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; color:#40584f; font:500 12px var(--app-font-serif); }
+.book-page-actions { display:flex; gap:4px; }
+.book-page-icon { display:grid; place-items:center; width:25px; height:25px; border:1px solid #e5e2d8; border-radius:4px; background:#fffefa; color:#63766b; cursor:pointer; }
+.book-page-icon svg { width:13px; height:13px; }
+.book-page-icon:disabled { opacity:.35; cursor:not-allowed; }
+.book-page-icon.danger { color:#a86359; }
+.book-page-settings { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.book-page-settings label,.book-page-field { display:grid; gap:5px; }
+.book-page-field textarea { min-height:88px; resize:vertical; line-height:1.5; }
+.book-pages-empty,.book-pages-footer { margin:0; color:#89948a; font:9px/1.5 var(--app-font-sans); }
+@media (max-width:620px) {
+  .book-pages-add { align-items:stretch; flex-direction:column; }
+  .book-page-settings { grid-template-columns:1fr; }
+  .dialog.book-pages-dialog { padding:15px; }
+}
 .modal-x { border:0;background:transparent;color:#708077;padding:5px; }
 .modal-x svg { width:17px;height:17px; }
 .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:11px; }
@@ -298,6 +323,14 @@
 .dark .meter-estimate-title strong { color:#dce4d8; }
 .dark .meter-estimate-detail { color:#b5c7b8; }
 .dark .meter-estimate-pattern { color:#d2b6a9; }
+.dark .book-pages-guidance { background:#20322c; border-color:#3b5048; color:#b0beb2; }
+.dark .book-pages-section h3 { color:#d5e1d7; }
+.dark .book-pages-section h3 span { background:#33473e; color:#c2d0c4; }
+.dark .book-page-card,.dark .book-page-icon { background:#20322c; border-color:#3b5048; color:#d4dfd5; }
+.dark .book-pages-add select,.dark .book-page-settings select,.dark .book-page-field input,.dark .book-page-field textarea { background:#20322c; border-color:#3b5048; color:#e3e9e2; }
+.dark .book-page-card-head { color:#dce5dc; }
+.dark .book-page-icon.danger { color:#e0a197; }
+.dark .book-pages-empty,.dark .book-pages-footer { color:#b0beb2; }
 .dark .button,.dark .text-field,.dark .search-field,.dark .select-tool { background:#2b4039;color:#dce3d8;border-color:#43584e; }
 .dark .button:hover { background:#354b42; }
 .dark .switch-row,.dark .rhyme-row,.dark .form-item { border-color:#394c43; }

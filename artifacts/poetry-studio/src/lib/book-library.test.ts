@@ -10,6 +10,7 @@ import {
 import { serializeBookPdf } from "./poem-files";
 import { emptyPoemMetadata } from "./poem-files";
 import type { BrowserPoemDraft } from "./poem-files";
+import type { BookMatterPage } from "./book-pages";
 
 Object.defineProperty(globalThis, "DOMParser", { value: XmlDomParser, configurable: true });
 Object.defineProperty(globalThis, "Node", {
@@ -80,10 +81,21 @@ test("book bundle keeps poem order and safe formatting while removing unsafe HTM
     },
     { id: "poem-2", title: "Second", editorHtml: "<p>Quiet</p>", source: null },
   ];
-  const serialized = serializeBookBundle("Night poems", poems);
+  const pages: BookMatterPage[] = [{
+    id: "title-page",
+    type: "title-page",
+    section: "before-contents",
+    side: "recto",
+    title: "Night poems",
+    content: "By Example Poet",
+    alignment: "center",
+  }];
+  const serialized = serializeBookBundle("Night poems", poems, pages);
   const imported = await readBookBundle(new File([serialized], "night.poetrybook"));
 
   assert.equal(imported.title, "Night poems");
+  assert.deepEqual(imported.pages, pages);
+  assert.equal(JSON.parse(serialized).version, 2);
   assert.deepEqual(imported.poems.map((poem) => poem.title), ["First", "Second"]);
   assert.match(imported.poems[0].editorHtml, /style="text-align:center"/);
   assert.match(imported.poems[0].editorHtml, /<strong>Bright<\/strong>/);
@@ -101,12 +113,13 @@ test("imports older book files with empty poem metadata", async () => {
   const imported = await readBookBundle(file);
 
   assert.deepEqual(imported.poems[0].metadata, emptyPoemMetadata());
+  assert.deepEqual(imported.pages, []);
 });
 
 test("book file import rejects incompatible versions and empty books", async () => {
   const unsupported = new File([JSON.stringify({
     format: "poetry-studio-book",
-    version: 2,
+    version: 3,
     book: { title: "Test" },
     poems: [{ title: "Line", editorHtml: "<p>Line</p>" }],
   })], "future.poetrybook");
@@ -128,11 +141,12 @@ test("book PDF starts each poem on a separate page", async () => {
   ]).text();
   const pages = pdfPageText(pdf);
 
-  assert.equal((pdf.match(/\/Type \/Page\b/g) || []).length, 3);
-  assert.match(pdf, /\/Count 3/);
-  assert.match(pages[0], /Contents\|First\|2\|Second\|3/);
-  assert.match(pages[1], /First/);
-  assert.match(pages[2], /Second/);
+  assert.equal((pdf.match(/\/Type \/Page\b/g) || []).length, 4);
+  assert.match(pdf, /\/Count 4/);
+  assert.match(pages[0], /Contents\|First\|3\|Second\|4/);
+  assert.equal(pages[1], "");
+  assert.match(pages[2], /First/);
+  assert.match(pages[3], /Second/);
 });
 
 test("book contents page numbers account for poems that span multiple pages", async () => {
@@ -143,10 +157,11 @@ test("book contents page numbers account for poems that span multiple pages", as
   ]).text();
   const pages = pdfPageText(pdf);
 
-  assert.match(pages[0], /Contents\|Long poem\|2\|Short poem\|4/);
-  assert.match(pages[1], /Long poem/);
-  assert.match(pages[2], /Line 70/);
-  assert.match(pages[3], /Short poem/);
+  assert.match(pages[0], /Contents\|Long poem\|3\|Short poem\|5/);
+  assert.equal(pages[1], "");
+  assert.match(pages[2], /Long poem/);
+  assert.match(pages[3], /Line 70/);
+  assert.match(pages[4], /Short poem/);
 });
 
 test("book contents page numbers include every contents page", async () => {
@@ -179,7 +194,39 @@ test("book PDF preserves saved emphasis and alignment without styling plain entr
   assert.match(pdf, /BT \/F3 11 Tf/);
   assert.match(pdf, /BT \/F1 11 Tf 0 Tw 512\.5 644 Td <5269676874>/);
   assert.match(pdf, /BT \/F1 11 Tf 0 Tw 72 659 Td <506C61696E>/);
-  assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), 3);
+  assert.equal(Number(pdf.match(/\/Count (\d+)/)?.[1]), 4);
+});
+
+test("book pages honor recto and verso placement and count inserted blanks in the contents", async () => {
+  const pages: BookMatterPage[] = [
+    {
+      id: "title-page",
+      type: "title-page",
+      section: "before-contents",
+      side: "recto",
+      title: "A Small Book",
+      content: "By Example Poet",
+      alignment: "center",
+    },
+    {
+      id: "copyright",
+      type: "copyright",
+      section: "before-contents",
+      side: "verso",
+      title: "Copyright",
+      content: "Copyright 2026",
+      alignment: "left",
+    },
+  ];
+  const pdf = await serializeBookPdf("A Small Book", [{ title: "First poem", text: "First line" }], undefined, pages).text();
+  const physicalPages = pdfPageText(pdf);
+
+  assert.equal(physicalPages.length, 5);
+  assert.match(physicalPages[0], /A Small Book/);
+  assert.match(physicalPages[1], /Copyright/);
+  assert.match(physicalPages[2], /Contents\|First poem\|5/);
+  assert.equal(physicalPages[3], "");
+  assert.match(physicalPages[4], /First poem/);
 });
 
 test("book HTML sanitizer removes active content and preserves supported style", () => {

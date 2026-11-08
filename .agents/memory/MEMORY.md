@@ -7,3 +7,4 @@
 - [Markdown indent representation](markdown-indent-representation.md) — use non-breaking spaces for exported visual indents; regular leading spaces can turn Markdown paragraphs into code blocks.
 - [Scansion processing boundary](scansion-processing-boundary.md) — keep poem analysis on-device and Calliope-TS scope English-only unless the user approves a change.
 - [Cross-format formatting preservation](cross-format-formatting-preservation.md) — import formatting from supported document formats and preserve it on same-format or cross-format exports where supported.
+- [Book construction scope](book-construction-scope.md) — books still group poems, while growing into lightweight print-book construction with editable matter and correct recto/verso placement.
