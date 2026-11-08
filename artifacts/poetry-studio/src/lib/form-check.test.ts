@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { analyzePoemForm, splitPoemStanzas, type FormCheckLookups } from './form-check';
+import type { LineStressResult } from './phonetics';
 import { forms, type FormEntry } from './poetry-forms';
 
 const form: FormEntry = {
@@ -18,7 +19,11 @@ const form: FormEntry = {
   },
 };
 
-function lookups(syllables: Record<string, number>, rhymes: Record<string, string>): FormCheckLookups {
+function lookups(
+  syllables: Record<string, number>,
+  rhymes: Record<string, string>,
+  stresses: Record<string, LineStressResult> = {},
+): FormCheckLookups {
   return {
     countLineSyllables: async (line) => ({
       count: syllables[line] ?? 1,
@@ -26,6 +31,12 @@ function lookups(syllables: Record<string, number>, rhymes: Record<string, strin
       estimatedWords: line in syllables ? [] : [line.split(/\s+/).at(-1) ?? line],
     }),
     getRhymeKey: async (word) => rhymes[word.toLowerCase()] ?? null,
+    analyzeLineStress: async (line) => stresses[line] ?? ({
+      pattern: '?',
+      unknownWords: [line],
+      ambiguousWords: [],
+      secondaryStressWords: [],
+    }),
   };
 }
 
@@ -47,6 +58,48 @@ test('reports line, syllable, and rhyme deviations against a configured form', a
   assert.equal(result.checks.find((item) => item.label === 'Rhyme · stanza 1')?.status, 'match');
   assert.equal(result.lineSyllables[3].expected, 7);
   assert.equal(result.lineSyllables[3].actual, 6);
+});
+
+test('compares configured meter patterns and describes deviations as potential', async () => {
+  const metered: FormEntry = {
+    ...form,
+    name: 'Meter sample',
+    check: { meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' } },
+  };
+  const result = await analyzePoemForm('regular line\nvaried line', metered, lookups({}, {}, {
+    'regular line': { pattern: 'u/u/u/u/u/', unknownWords: [], ambiguousWords: [], secondaryStressWords: [] },
+    'varied line': { pattern: 'u//u/u/u/u', unknownWords: [], ambiguousWords: [], secondaryStressWords: [] },
+  }));
+
+  assert.deepEqual(result.lineMeters.map((line) => line.status), ['match', 'warning']);
+  assert.equal(result.checks.find((item) => item.label === 'Iambic pentameter')?.status, 'warning');
+  assert.match(result.checks.find((item) => item.label === 'Iambic pentameter')?.detail ?? '', /potential metrical variation/);
+});
+
+test('keeps unknown and alternate pronunciations informational in meter checks', async () => {
+  const metered: FormEntry = {
+    ...form,
+    name: 'Meter sample',
+    check: { meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' } },
+  };
+  const result = await analyzePoemForm('unknown line\nambiguous line', metered, lookups({}, {}, {
+    'unknown line': {
+      pattern: 'u/?u/u/u/',
+      unknownWords: ['unknown'],
+      ambiguousWords: [],
+      secondaryStressWords: [],
+    },
+    'ambiguous line': {
+      pattern: 'u/?u/u/u/',
+      unknownWords: [],
+      ambiguousWords: ['ambiguous'],
+      secondaryStressWords: [],
+    },
+  }));
+
+  assert.deepEqual(result.lineMeters.map((line) => line.status), ['info', 'info']);
+  assert.equal(result.checks.find((item) => item.label === 'Iambic pentameter')?.status, 'info');
+  assert.match(result.checks.find((item) => item.label === 'Iambic pentameter')?.detail ?? '', /unknown, alternate, or secondary stress/);
 });
 
 test('marks rhyme checks as informational when pronunciation is unknown', async () => {
@@ -101,6 +154,8 @@ test('uses the selected sonnet variant for stanza and rhyme expectations', async
   assert.equal(result.variantName, 'Shakespearean');
   assert.deepEqual(result.checks.find((item) => item.label === 'Stanza shape')?.status, 'match');
   assert.deepEqual(result.rhymeChecks.map((item) => item.expected), ['ABAB', 'CDCD', 'EFEF', 'GG']);
+  assert.equal(result.lineMeters.length, 14);
+  assert.equal(result.checks.find((item) => item.label === 'Iambic pentameter')?.status, 'info');
   assert.equal(result.notes.some((note) => note.includes('turn in thought')), true);
 });
 

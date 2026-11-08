@@ -6,6 +6,7 @@ export type FormCheckSpec = {
   repeatWordPattern?: boolean;
   syllablePattern?: number[];
   repeatSyllablePattern?: boolean;
+  meter?: { name: string; pattern: string };
   stanzaPattern?: number[];
   repeatStanzaPattern?: boolean;
   rhymePatterns?: string[][];
@@ -83,7 +84,10 @@ export const forms: FormEntry[] = [
     example: 'five iambs · no end rhyme',
     exampleTitle: '“Paradise Lost,” Book 12 by John Milton',
     exampleUrl: 'https://www.poetryfoundation.org/poems/45748/paradise-lost-book-12-1674-version',
-    check: { notes: ['Meter and substitutions are not graded; read the stress pattern aloud.'] },
+    check: {
+      meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
+      notes: ['Metrical substitutions and phrase stress need a human reading; this comparison is only lexical guidance.'],
+    },
   },
   {
     name: 'Cascade',
@@ -338,7 +342,13 @@ export const forms: FormEntry[] = [
     example: 'ABABBCC',
     exampleTitle: '“They flee from me” by Thomas Wyatt',
     exampleUrl: 'https://rpo.library.utoronto.ca/glossary/poems/they-flee-me-sometime-did-me-seek',
-    check: { stanzaPattern: [7], repeatStanzaPattern: true, rhymePatterns: [['A', 'B', 'A', 'B', 'B', 'C', 'C']], repeatRhymePattern: true },
+    check: {
+      stanzaPattern: [7],
+      repeatStanzaPattern: true,
+      rhymePatterns: [['A', 'B', 'A', 'B', 'B', 'C', 'C']],
+      repeatRhymePattern: true,
+      meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
+    },
   },
   {
     name: 'Rondeau',
@@ -383,8 +393,9 @@ export const forms: FormEntry[] = [
           lineCount: 14,
           stanzaPattern: [4, 4, 4, 2],
           rhymePatterns: [['A', 'B', 'A', 'B'], ['C', 'D', 'C', 'D'], ['E', 'F', 'E', 'F'], ['G', 'G']],
+          meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
         },
-        notes: ['Iambic pentameter, substitutions, and the turn in thought need human review.'],
+        notes: ['Metrical substitutions and the turn in thought need human review.'],
       },
       {
         id: 'petrarchan-cdecde',
@@ -394,8 +405,9 @@ export const forms: FormEntry[] = [
           lineCount: 14,
           stanzaPattern: [8, 6],
           rhymePatterns: [['A', 'B', 'B', 'A', 'A', 'B', 'B', 'A'], ['C', 'D', 'E', 'C', 'D', 'E']],
+          meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
         },
-        notes: ['Petrarchan sestets have other accepted rhyme patterns; meter and the turn in thought need human review.'],
+        notes: ['Petrarchan sestets have other accepted rhyme patterns; metrical substitutions and the turn in thought need human review.'],
       },
       {
         id: 'petrarchan-cdcdcd',
@@ -405,8 +417,9 @@ export const forms: FormEntry[] = [
           lineCount: 14,
           stanzaPattern: [8, 6],
           rhymePatterns: [['A', 'B', 'B', 'A', 'A', 'B', 'B', 'A'], ['C', 'D', 'C', 'D', 'C', 'D']],
+          meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
         },
-        notes: ['Petrarchan sestets have other accepted rhyme patterns; meter and the turn in thought need human review.'],
+        notes: ['Petrarchan sestets have other accepted rhyme patterns; metrical substitutions and the turn in thought need human review.'],
       },
       {
         id: 'spenserian',
@@ -417,8 +430,9 @@ export const forms: FormEntry[] = [
           stanzaPattern: [4, 4, 4, 2],
           rhymePatterns: [['A', 'B', 'A', 'B'], ['B', 'C', 'B', 'C'], ['C', 'D', 'C', 'D'], ['E', 'E']],
           rhymeLinks: [[2, 5], [2, 7], [6, 9], [6, 11]] as [number, number][],
+          meter: { name: 'Iambic pentameter', pattern: 'u/u/u/u/u/' },
         },
-        notes: ['Iambic pentameter, substitutions, and the turn in thought need human review.'],
+        notes: ['Metrical substitutions and the turn in thought need human review.'],
       },
     ],
   },

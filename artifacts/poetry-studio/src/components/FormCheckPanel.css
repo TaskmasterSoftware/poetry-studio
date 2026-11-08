@@ -180,6 +180,67 @@
   gap: 4px;
 }
 
+.form-meter-checks {
+  display: grid;
+  gap: 4px;
+}
+
+.form-meter-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #e3e1d6;
+  border-radius: 4px;
+  background: #fbfaf5;
+  color: #758178;
+  font: 9px var(--app-font-mono, monospace);
+}
+
+.form-meter-row > span {
+  padding-top: 2px;
+}
+
+.form-meter-row > div {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3px;
+  min-width: 0;
+}
+
+.form-meter-row code {
+  color: #526a5c;
+  font: inherit;
+  letter-spacing: .08em;
+}
+
+.form-meter-row strong {
+  color: #526a5c;
+  font-weight: 600;
+}
+
+.form-meter-row small {
+  color: #9ba194;
+  font-size: 8px;
+  overflow-wrap: anywhere;
+}
+
+.form-meter-row.status-warning {
+  border-color: #e4c8ad;
+  background: #f9ede2;
+  color: #94694e;
+}
+
+.form-meter-row.status-warning strong,
+.form-meter-row.status-warning code {
+  color: #94694e;
+}
+
+.form-meter-row.status-info {
+  border-color: #d8d8c8;
+}
+
 .form-rhyme-row strong {
   color: #526a5c;
   letter-spacing: .12em;
@@ -233,6 +294,11 @@
 .dark .form-check-row strong,.dark .form-check-caveat strong { color:#d7e0d4; }
 .dark .form-check-row span,.dark .form-check-caveat,.dark .form-check-notes { color:#b0beb2; }
 .dark .form-line-count,.dark .form-rhyme-row { border-color:#3b5048; background:#293e34; color:#bec8ba; }
+.dark .form-meter-row { border-color:#3b5048; background:#293e34; color:#bec8ba; }
+.dark .form-meter-row code,.dark .form-meter-row strong { color:#d5e0d2; }
+.dark .form-meter-row small { color:#aab8ac; }
+.dark .form-meter-row.status-warning { border-color:#69503e; background:#44362d; color:#e1b591; }
+.dark .form-meter-row.status-warning strong,.dark .form-meter-row.status-warning code { color:#e1b591; }
 .dark .form-line-count strong,.dark .form-rhyme-row strong { color:#d5e0d2; }
 .dark .form-line-count.is-warning,.dark .form-rhyme-row.status-warning { border-color:#69503e; background:#44362d; color:#e1b591; }
 .dark .form-line-count.is-warning strong,.dark .form-rhyme-row.status-warning strong { color:#e1b591; }

@@ -1,4 +1,4 @@
-import { countLineSyllables, getRhymeKey, type SyllableCountResult } from './phonetics';
+import { analyzeLineStress, countLineSyllables, getRhymeKey, type LineStressResult, type SyllableCountResult } from './phonetics';
 import type { FormEntry, FormCheckSpec } from './poetry-forms';
 
 export type FormCheckStatus = 'match' | 'warning' | 'info';
@@ -22,6 +22,16 @@ export type FormLineWords = {
   expected?: number;
 };
 
+export type FormLineMeter = {
+  line: number;
+  expected: string;
+  actual: string;
+  status: FormCheckStatus;
+  unknownWords: string[];
+  ambiguousWords: string[];
+  secondaryStressWords: string[];
+};
+
 export type FormRhymeCheck = {
   stanza: number;
   expected: string;
@@ -38,6 +48,7 @@ export type FormCheckResult = {
   checks: FormCheckItem[];
   lineWords: FormLineWords[];
   lineSyllables: FormLineSyllables[];
+  lineMeters: FormLineMeter[];
   rhymeChecks: FormRhymeCheck[];
   notes: string[];
 };
@@ -45,9 +56,10 @@ export type FormCheckResult = {
 export type FormCheckLookups = {
   countLineSyllables: (line: string) => Promise<SyllableCountResult>;
   getRhymeKey: (word: string) => Promise<string | null>;
+  analyzeLineStress: (line: string) => Promise<LineStressResult>;
 };
 
-const defaultLookups: FormCheckLookups = { countLineSyllables, getRhymeKey };
+const defaultLookups: FormCheckLookups = { countLineSyllables, getRhymeKey, analyzeLineStress };
 
 export function splitPoemStanzas(text: string) {
   const stanzas: string[][] = [];
@@ -142,10 +154,11 @@ export async function analyzePoemForm(
   const checks: FormCheckItem[] = [];
   const lineWords: FormLineWords[] = [];
   const lineSyllables: FormLineSyllables[] = [];
+  const lineMeters: FormLineMeter[] = [];
   const rhymeChecks: FormRhymeCheck[] = [];
   const notes = [
     'Blank lines mark stanza breaks. Syllable counts use a pronunciation dictionary with rough estimates for unknown words.',
-    'Rhyme checks compare dictionary pronunciations for exact end rhymes; slant rhyme, dialect, meter, and deliberate variation may be missed.',
+    'Rhyme checks compare dictionary pronunciations for exact end rhymes; slant rhyme, dialect, phrase stress, and deliberate variation may be missed.',
     ...(spec.notes ?? []),
     ...(variant?.notes ?? []),
   ];
@@ -163,6 +176,7 @@ export async function analyzePoemForm(
       checks,
       lineWords,
       lineSyllables,
+      lineMeters,
       rhymeChecks,
       notes,
     };
@@ -170,7 +184,7 @@ export async function analyzePoemForm(
 
   if (!lines.length) {
     checks.push({ label: 'Poem', status: 'info', detail: 'Add poem lines to run the form check.' });
-    return { formName: form.name, ...resultVariant, lineCount: 0, stanzaCount: 0, checks, lineWords, lineSyllables, rhymeChecks, notes };
+    return { formName: form.name, ...resultVariant, lineCount: 0, stanzaCount: 0, checks, lineWords, lineSyllables, lineMeters, rhymeChecks, notes };
   }
 
   if (spec.lineCount !== undefined) {
@@ -263,6 +277,43 @@ export async function analyzePoemForm(
         detail: 'At least one word was not in the pronunciation dictionary; its count is estimated from spelling.',
       });
     }
+  }
+
+  if (spec.meter) {
+    const stressResults = await Promise.all(lines.map((line) => lookups.analyzeLineStress(line)));
+    const meters = stressResults.map((stress, index) => {
+      const expected = spec.meter!.pattern;
+      const hasUncertainty = stress.pattern.includes('?')
+        || stress.unknownWords.length > 0
+        || stress.ambiguousWords.length > 0
+        || stress.secondaryStressWords.length > 0;
+      const matches = stress.pattern.length === expected.length
+        && [...expected].every((mark, syllable) => stress.pattern[syllable] === mark);
+      const status: FormCheckStatus = hasUncertainty ? 'info' : matches ? 'match' : 'warning';
+      return {
+        line: index + 1,
+        expected,
+        actual: stress.pattern,
+        status,
+        unknownWords: stress.unknownWords,
+        ambiguousWords: stress.ambiguousWords,
+        secondaryStressWords: stress.secondaryStressWords,
+      };
+    });
+    lineMeters.push(...meters);
+    const matched = meters.filter((meter) => meter.status === 'match').length;
+    const uncertain = meters.filter((meter) => meter.status === 'info').length;
+    const diverged = meters.filter((meter) => meter.status === 'warning').length;
+    const status: FormCheckStatus = diverged > 0 ? 'warning' : uncertain > 0 ? 'info' : 'match';
+    checks.push({
+      label: spec.meter.name,
+      status,
+      detail: uncertain
+        ? `${matched} lines align; ${diverged} show potential metrical variation and ${uncertain} line${uncertain === 1 ? '' : 's'} have unknown, alternate, or secondary stress. Read those aloud before interpreting the comparison.`
+        : diverged
+          ? `${matched} of ${meters.length} lines align; ${diverged} potential metrical variation${diverged === 1 ? '' : 's'} detected.`
+          : `All ${meters.length} line stress patterns align with the configured ${spec.meter.name.toLowerCase()} pattern.`,
+    });
   }
 
   if (spec.rhymePatterns?.length) {
@@ -392,5 +443,5 @@ export async function analyzePoemForm(
     });
   }
 
-  return { formName: form.name, ...resultVariant, lineCount: lines.length, stanzaCount: stanzas.length, checks, lineWords, lineSyllables, rhymeChecks, notes };
+  return { formName: form.name, ...resultVariant, lineCount: lines.length, stanzaCount: stanzas.length, checks, lineWords, lineSyllables, lineMeters, rhymeChecks, notes };
 }

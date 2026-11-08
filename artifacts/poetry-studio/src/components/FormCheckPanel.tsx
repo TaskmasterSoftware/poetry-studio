@@ -86,6 +86,27 @@ export default function FormCheckPanel({ result, checking, onRecheck }: FormChec
         </div>
       </div>}
 
+      {result.lineMeters.length > 0 && <div className="form-check-details">
+        <h4>Stress by line · u unstressed, / stressed, ? uncertain</h4>
+        <div className="form-meter-checks">
+          {result.lineMeters.map((line) => {
+            const uncertainWords = [...new Set([
+              ...line.unknownWords,
+              ...line.ambiguousWords,
+              ...line.secondaryStressWords,
+            ])];
+            return <div className={`form-meter-row status-${line.status}`} key={line.line} data-testid={`form-meter-check-${line.line}`}>
+              <span>Line {line.line}</span>
+              <div>
+                <small>Expected <code>{line.expected.split('').join(' ')}</code></small>
+                <strong>Detected <code>{line.actual ? line.actual.split('').join(' ') : '—'}</code></strong>
+                {uncertainWords.length > 0 && <small>Uncertain: {uncertainWords.join(', ')}</small>}
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>}
+
       {result.rhymeChecks.length > 0 && <div className="form-check-details">
         <h4>Rhyme scheme by stanza</h4>
         <div className="form-rhyme-checks">

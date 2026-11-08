@@ -34,8 +34,16 @@ export type SyllableCountResult = {
   estimatedWords: string[];
 };
 
+export type LineStressResult = {
+  pattern: string;
+  unknownWords: string[];
+  ambiguousWords: string[];
+  secondaryStressWords: string[];
+};
+
 let dictionaryPromise: Promise<Pronunciation[]> | undefined;
 let lexiconPromise: Promise<Map<string, Pronunciation>> | undefined;
+let pronunciationVariantsPromise: Promise<Map<string, Pronunciation[]>> | undefined;
 
 const isVowel = (phone: string) => /[012]$/.test(phone);
 const cleanPhone = (phone: string) => phone.replace(/[012]$/, "");
@@ -128,6 +136,22 @@ async function getLexicon(): Promise<Map<string, Pronunciation>> {
   return lexiconPromise;
 }
 
+async function getPronunciationVariants(): Promise<Map<string, Pronunciation[]>> {
+  if (!pronunciationVariantsPromise) {
+    pronunciationVariantsPromise = getDictionary().then((entries) => {
+      const variants = new Map<string, Map<string, Pronunciation>>();
+      for (const entry of entries) {
+        const signature = `${entry.syllables}:${entry.stressDigits}`;
+        const wordVariants = variants.get(entry.word) ?? new Map<string, Pronunciation>();
+        wordVariants.set(signature, entry);
+        variants.set(entry.word, wordVariants);
+      }
+      return new Map([...variants].map(([word, wordVariants]) => [word, [...wordVariants.values()]]));
+    });
+  }
+  return pronunciationVariantsPromise;
+}
+
 export async function getRhymeKey(word: string): Promise<string | null> {
   const normalized = word.toLowerCase().replace(/’/g, "'").replace(/[^a-z']/g, "");
   if (!normalized) return null;
@@ -154,6 +178,50 @@ export async function countLineSyllables(line: string): Promise<SyllableCountRes
   }
 
   return { count, estimated: estimatedWords.length > 0, estimatedWords };
+}
+
+function stressMark(stress: string) {
+  if (stress === "1") return "/";
+  if (stress === "0") return "u";
+  return "?";
+}
+
+export async function analyzeLineStress(line: string): Promise<LineStressResult> {
+  const [lexicon, variantsByWord] = await Promise.all([getLexicon(), getPronunciationVariants()]);
+  const unknownWords: string[] = [];
+  const ambiguousWords: string[] = [];
+  const secondaryStressWords: string[] = [];
+  const pattern: string[] = [];
+
+  for (const match of line.matchAll(/[a-z']+/gi)) {
+    const word = match[0];
+    const normalized = word.toLowerCase().replace(/’/g, "'");
+    const variants = variantsByWord.get(normalized) ?? [];
+    const primary = lexicon.get(normalized);
+
+    if (!primary || variants.length === 0) {
+      const fallbackSyllables = Math.max(1, word.match(/[aeiouy]+/gi)?.length ?? 1);
+      pattern.push(...Array.from({ length: fallbackSyllables }, () => "?"));
+      unknownWords.push(word);
+      continue;
+    }
+
+    if (primary.stressDigits.includes("2")) secondaryStressWords.push(word);
+    if (variants.length > 1) ambiguousWords.push(word);
+
+    if (variants.length > 1 && variants.some((variant) => variant.syllables !== primary.syllables)) {
+      pattern.push(...Array.from({ length: primary.syllables }, () => "?"));
+      continue;
+    }
+
+    for (let syllable = 0; syllable < primary.syllables; syllable++) {
+      const stresses = variants.map((variant) => variant.stressDigits[syllable]);
+      const stress = stresses[0];
+      pattern.push(stresses.some((variantStress) => variantStress !== stress) ? "?" : stressMark(stress));
+    }
+  }
+
+  return { pattern: pattern.join(""), unknownWords, ambiguousWords, secondaryStressWords };
 }
 
 export async function findRhymes(
