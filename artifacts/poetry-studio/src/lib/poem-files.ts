@@ -474,9 +474,6 @@ function wrapPdfLine(value: string, maxCharacters: number) {
 
 function assemblePdf(title: string, pages: string[][], options: PdfExportOptions) {
   const { width, height } = pdfDimensions(options);
-  const pdfVersion = options.outputProfile === 'pdfx-1a-2003'
-    ? '1.4'
-    : options.outputProfile.replace('standard-', '');
   const objects: string[] = [];
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pages.map((_, index) => `${7 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
@@ -495,7 +492,7 @@ function assemblePdf(title: string, pages: string[][], options: PdfExportOptions
 
   const infoNumber = objects.length;
   objects[infoNumber] = `<< /Title <${pdfUnicodeHex(title.trim() || 'Untitled poem')}> /Producer (Poetry Studio) >>`;
-  let pdf = `%PDF-${pdfVersion}\n%Poetry Studio\n`;
+  let pdf = '%PDF-1.4\n%Poetry Studio\n';
   const offsets = [0];
   for (let objectNumber = 1; objectNumber < objects.length; objectNumber += 1) {
     offsets[objectNumber] = pdf.length;
@@ -513,18 +510,9 @@ function assemblePdf(title: string, pages: string[][], options: PdfExportOptions
 export type PdfPageSize = 'letter' | 'a4' | 'a5' | 'custom';
 export type PdfMarginPreset = 'narrow' | 'standard' | 'wide';
 export type PdfOrientation = 'portrait' | 'landscape';
-export type PdfOutputProfile =
-  | 'standard-1.3'
-  | 'standard-1.4'
-  | 'standard-1.5'
-  | 'standard-1.6'
-  | 'standard-1.7'
-  | 'standard-2.0'
-  | 'pdfx-1a-2003';
 export interface PdfExportOptions {
   pageSize: PdfPageSize;
   margins: PdfMarginPreset;
-  outputProfile: PdfOutputProfile;
   orientation?: PdfOrientation;
   customWidthInches?: number;
   customHeightInches?: number;
@@ -533,22 +521,12 @@ export interface PdfExportOptions {
 export const defaultPdfExportOptions: PdfExportOptions = {
   pageSize: 'letter',
   margins: 'standard',
-  outputProfile: 'standard-1.4',
   orientation: 'portrait',
   customWidthInches: 8.5,
   customHeightInches: 11,
 };
 const defaultCustomPdfWidthInches = 8.5;
 const defaultCustomPdfHeightInches = 11;
-const pdfOutputProfiles: PdfOutputProfile[] = [
-  'standard-1.3',
-  'standard-1.4',
-  'standard-1.5',
-  'standard-1.6',
-  'standard-1.7',
-  'standard-2.0',
-  'pdfx-1a-2003',
-];
 
 export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -567,9 +545,6 @@ export function normalizePdfExportOptions(value: unknown): PdfExportOptions {
     margins: saved.margins === 'narrow' || saved.margins === 'standard' || saved.margins === 'wide'
       ? saved.margins
       : defaultPdfExportOptions.margins,
-    outputProfile: pdfOutputProfiles.includes(saved.outputProfile as PdfOutputProfile)
-      ? saved.outputProfile as PdfOutputProfile
-      : defaultPdfExportOptions.outputProfile,
     orientation: saved.orientation === 'portrait' || saved.orientation === 'landscape'
       ? saved.orientation
       : defaultPdfExportOptions.orientation,

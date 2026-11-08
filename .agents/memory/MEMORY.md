@@ -8,3 +8,4 @@
 - [Scansion processing boundary](scansion-processing-boundary.md) — keep poem analysis on-device and Calliope-TS scope English-only unless the user approves a change.
 - [Cross-format formatting preservation](cross-format-formatting-preservation.md) — import formatting from supported document formats and preserve it on same-format or cross-format exports where supported.
 - [Book construction scope](book-construction-scope.md) — books still group poems, while growing into lightweight print-book construction with editable matter and correct recto/verso placement.
+- [PDF print standards](pdf-print-standards.md) — verify the exact PDF/X revision; Kura’s x1a output is 2003, not the requested 2001.

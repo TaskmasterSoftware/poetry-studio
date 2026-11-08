@@ -53,5 +53,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+.env
+.env.*
+!.env.example
+!.env.sample
 artifacts/poetry-studio/test-results/
 artifacts/poetry-studio/playwright-report/

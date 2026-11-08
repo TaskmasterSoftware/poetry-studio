@@ -1601,7 +1601,14 @@ function App() {
           onEditBookPages={openBookPages}
           onImportBook={beginBookImport}
         />
-        <div className="side-foot"><div className="side-note">A quiet place for unfinished things.<br/>Your work stays on this device.</div></div>
+        <div className="side-foot">
+          <div className="side-note">A quiet place for unfinished things.<br/>Your work stays on this device.</div>
+          <div className="side-note" style={{ marginTop: 8 }}>
+            <a href={`${import.meta.env.BASE_URL}AGPL-3.0.txt`} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>Software licence</a>
+            {' · '}
+            <a href={`${import.meta.env.BASE_URL}THIRD_PARTY_NOTICES.txt`} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>Notices</a>
+          </div>
+        </div>
       </aside>
       <main className="main">
         <header className="topbar">
