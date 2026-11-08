@@ -499,3 +499,66 @@ test('keeps comparison highlights aligned when lines are inserted and removed', 
     await expect(pane.locator('.history-diff-line').filter({ hasText: 'Shared close' })).not.toHaveClass(/changed/);
   }
 });
+
+test('keeps repeated refrains aligned around inserted and removed lines', async ({ page }) => {
+  await page.goto('/');
+
+  const refrain = 'We return to the river';
+  await page.locator(titleInput).fill('The returning river');
+  await page.locator(editor).fill([
+    'The morning opens',
+    refrain,
+    'A lamp waits in the window',
+    refrain,
+    'The evening settles',
+  ].join('\n'));
+  await page.getByTestId('button-version-history').click();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.locator(editor).fill([
+    'The morning opens',
+    refrain,
+    'A new stanza begins',
+    'A lamp waits in the window',
+    refrain,
+    'The evening settles',
+  ].join('\n'));
+  await page.getByTestId('button-version-history').click();
+
+  const newerVersion = page.getByTestId('version-comparison-manuscript-1');
+  const olderVersion = page.getByTestId('version-comparison-manuscript-2');
+  await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(1);
+  await expect(newerVersion.locator('.history-diff-line.changed')).toContainText('A new stanza begins');
+  await expect(olderVersion.locator('.history-diff-line.changed')).toHaveCount(0);
+
+  for (const [pane, lineNumbers] of [[newerVersion, ['2', '5']], [olderVersion, ['2', '4']]] as const) {
+    const refrains = pane.locator('.history-diff-line').filter({ hasText: refrain });
+    await expect(refrains).toHaveCount(2);
+    for (const [index, lineNumber] of lineNumbers.entries()) {
+      await expect(refrains.nth(index)).not.toHaveClass(/changed/);
+      await expect(refrains.nth(index).locator('.history-line-number')).toHaveText(lineNumber);
+    }
+  }
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.locator(editor).fill([
+    'The morning opens',
+    refrain,
+    'A lamp waits in the window',
+    refrain,
+    'The evening settles',
+  ].join('\n'));
+  await page.getByTestId('button-version-history').click();
+
+  await expect(newerVersion.locator('.history-diff-line.changed')).toHaveCount(0);
+  await expect(olderVersion.locator('.history-diff-line.changed')).toHaveCount(1);
+  await expect(olderVersion.locator('.history-diff-line.changed')).toContainText('A new stanza begins');
+  for (const [pane, lineNumbers] of [[newerVersion, ['2', '4']], [olderVersion, ['2', '5']]] as const) {
+    const refrains = pane.locator('.history-diff-line').filter({ hasText: refrain });
+    await expect(refrains).toHaveCount(2);
+    for (const [index, lineNumber] of lineNumbers.entries()) {
+      await expect(refrains.nth(index)).not.toHaveClass(/changed/);
+      await expect(refrains.nth(index).locator('.history-line-number')).toHaveText(lineNumber);
+    }
+  }
+});
