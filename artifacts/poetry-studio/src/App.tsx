@@ -1455,6 +1455,8 @@ function App() {
   const alignedComparisonLines = alignComparisonLines(comparisonLines[0], comparisonLines[1]);
   const comparisonWordDiffs = alignedComparisonLines.map((lines) => lines.map((line) =>
     diffWords(line.text, line.peerText ?? '').left));
+  const comparisonChangedWordCounts = comparisonWordDiffs.map((lines) =>
+    lines.reduce((total, segments) => total + segments.filter((segment) => segment.isWord && segment.changed).length, 0));
   const comparisonTitlesMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
     && comparisonRevisions[0].title === comparisonRevisions[1].title);
   const comparisonManuscriptsMatch = Boolean(comparisonRevisions[0] && comparisonRevisions[1]
@@ -1758,6 +1760,9 @@ function App() {
                           <div className="field-label">Version {slot + 1} · {new Date(revision!.createdAt).toLocaleString()}</div>
                           <h3 className={!comparisonTitlesMatch ? 'changed' : ''}>{revision!.title || 'Untitled poem'}</h3>
                           <div className="history-manuscript-label field-label">Manuscript</div>
+                          <p className="history-word-change-count" data-testid={`version-comparison-word-count-${slot + 1}`}>
+                            {comparisonChangedWordCounts[slot]} {comparisonChangedWordCounts[slot] === 1 ? 'word' : 'words'} changed
+                          </p>
                           <pre className="history-diff-lines" data-testid={`version-comparison-manuscript-${slot + 1}`}>
                             {alignedComparisonLines[slot].map((line, lineIndex) => <span
                               className={`history-diff-line ${line.changed ? 'changed' : ''}`}

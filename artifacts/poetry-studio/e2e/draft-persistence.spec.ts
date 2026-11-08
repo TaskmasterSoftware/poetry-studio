@@ -300,6 +300,8 @@ test('compares two saved versions without changing the active draft', async ({ p
   await expect(page.getByTestId('version-comparison-manuscript-1').locator('.history-diff-line').nth(0).locator('.history-diff-word:not(.changed)')).toHaveText(['opening', 'line']);
   await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-word.changed')).toHaveText(['First']);
   await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-line').nth(0).locator('.history-diff-word:not(.changed)')).toHaveText(['opening', 'line']);
+  await expect(page.getByTestId('version-comparison-word-count-1')).toHaveText('1 word changed');
+  await expect(page.getByTestId('version-comparison-word-count-2')).toHaveText('1 word changed');
   await expect(page.locator('.history-compare-pane h3.changed')).toHaveCount(2);
   const comparisonColors = await page.evaluate(() => {
     const changedWord = document.querySelector<HTMLElement>(
