@@ -8,6 +8,7 @@ import {
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
 import PoemMetadataPanel from './components/PoemMetadataPanel';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
+import { searchPoetryForms, type FormEntry } from './lib/poetry-forms';
 import { layoutScansionOverlay, type ScanLineEdit, type ScanSymbol, type ScansionOverlayItem } from './lib/scansion-layout';
 import { findGrammarSuggestions, type GrammarSuggestion } from './lib/proofing';
 import { reorderPoemsInBook, type PoemOrderDirection } from './lib/poem-order';
@@ -22,30 +23,8 @@ import {
 import { diffWords } from './lib/version-diff';
 
 type Tool = 'rhymes' | 'forms' | 'proof' | 'scansion' | 'metadata';
-type FormEntry = { name: string; structure: string; description: string; example: string };
 
 const starter = `<p>At first light, the harbor keeps its blue</p><p>like a secret folded into glass.</p><p>The gulls unthread the quiet, one by one;</p><p>the tide turns over what the night let pass.</p><p><br></p><p>I write the names of rain along the sill,</p><p>then watch the letters loosen into air.</p><p>Some things are held by learning to be still.</p><p>Some things are gone, and still are everywhere.</p>`;
-const forms: FormEntry[] = [
-  { name: 'Sonnet', structure: '14 lines · iambic pentameter', description: 'A tightly turned lyric argument. Shakespearean sonnets close with a rhyming couplet; Petrarchan sonnets pivot at the octave.', example: 'ABAB CDCD EFEF GG' },
-  { name: 'Haiku', structure: '3 lines · 5 / 7 / 5 syllables', description: 'A brief image or moment, traditionally attentive to season and the natural world. English syllable counts are an approximation.', example: 'short / long / short' },
-  { name: 'Villanelle', structure: '19 lines · 5 tercets + quatrain', description: 'Two refrains circle through five tercets before meeting in a final quatrain.', example: 'ABA · ABA · ABA · ABA · ABA · ABAA' },
-  { name: 'Sestina', structure: '39 lines · 6 stanzas + envoy', description: 'Six end-words rotate through six six-line stanzas, then gather in a three-line envoy.', example: 'six repeating end-words' },
-  { name: 'Ghazal', structure: 'couplets · refrain + rhyme', description: 'Self-contained couplets linked by a repeating refrain and a shared rhyme before it.', example: 'AA · BA · CA · DA …' },
-  { name: 'Ode', structure: 'variable · elevated address', description: 'A sustained meditation addressed to a person, object, or idea. Shape the stanzas to the movement of thought.', example: 'stanza pattern of your choosing' },
-  { name: 'Blank verse', structure: 'unrhymed iambic pentameter', description: 'Five-beat lines without end rhyme; the steady pulse leaves room for speech-like variation.', example: '10-ish syllables per line' },
-  { name: 'Limerick', structure: '5 lines · AABBA', description: 'A compact, often comic form with longer first, second, and fifth lines and shorter third and fourth.', example: 'AABBA' },
-  { name: 'Tanka', structure: '5 lines · 5 / 7 / 5 / 7 / 7 syllables', description: 'A short lyric that extends the haiku shape with two longer lines; English syllable counts are approximate.', example: 'short / long / short / long / long' },
-  { name: 'Pantoum', structure: 'interlocking quatrains', description: 'Lines two and four of each stanza return as lines one and three of the next, creating a recursive movement.', example: 'ABAB · BCBC · CDCD …' },
-  { name: 'Terza rima', structure: 'three-line stanzas · ABA BCB CDC', description: 'Interlocking tercets carry one rhyme into the next stanza, often ending with a closing couplet.', example: 'ABA · BCB · CDC · D' },
-  { name: 'Ballad', structure: 'quatrains · alternating 4 / 3 stresses', description: 'A song-like narrative form, often using alternating four- and three-beat lines and an ABCB rhyme scheme.', example: 'ABCB · DEFE' },
-  { name: 'Rondeau', structure: '15 lines · two rhymes + refrain', description: 'Three stanzas share two rhymes, with the opening phrase returning as a refrain at the ends of the final stanzas.', example: 'AABBA · AABR · AABBAR' },
-  { name: 'Triolet', structure: '8 lines · two rhymes + repeated lines', description: 'An eight-line form built from two rhymes and a pair of lines that return in a fixed pattern.', example: 'ABaAabAB' },
-  { name: 'Cinquain', structure: '5 lines · syllabic or word-count patterns', description: 'A concise five-line form with several modern patterns; one common American version counts 2 / 4 / 6 / 8 / 2 syllables.', example: '2 · 4 · 6 · 8 · 2' },
-  { name: 'Elegy', structure: 'variable · lament and remembrance', description: 'A poem of loss that may move through grief, praise, and consolation without requiring a fixed meter or rhyme scheme.', example: 'lament · remembrance · turn' },
-  { name: 'Epigram', structure: 'brief · pointed turn', description: 'A compact poem that resolves in a witty, surprising, or sharply compressed final thought.', example: 'setup · turn' },
-  { name: 'Acrostic', structure: 'lines spell a word or phrase', description: 'The first, middle, or last letters of successive lines form a name, message, or key word.', example: 'initial letters read downward' },
-  { name: 'Free verse', structure: 'open form · no fixed scheme', description: 'Line, breath, image, and sound make the architecture. Repetition can supply a pulse without a meter.', example: 'follow the music of the sentence' },
-];
 const fontFamilies = [
   { label: 'Georgia', value: 'Georgia, serif' },
   { label: 'Palatino', value: '"Palatino Linotype", Palatino, serif' },
@@ -386,7 +365,7 @@ function App() {
   const countedLineEntries = scanTextLines.map((line, index) => ({ line, index })).filter(({ line }) => line.trim());
   const query = (rhymeQuery || selection.split(/\s+/).filter(Boolean).pop() || '').replace(/[^\p{L}'-]/gu, '');
   const grammars = useMemo(() => findGrammarSuggestions(text).filter((item) => !dismissed.includes(item.id) && !ignoredGrammar.includes(item.id)), [text, dismissed, ignoredGrammar]);
-  const filteredForms = forms.filter((form) => `${form.name} ${form.structure} ${form.description}`.toLowerCase().includes(formQuery.toLowerCase()));
+  const filteredForms = searchPoetryForms(formQuery);
 
   useEffect(() => {
     let current = true;
@@ -1432,7 +1411,7 @@ function App() {
           </section>
           <aside className="right-panel">
             <div className="panel-head">
-              <div><div className="panel-title">{activeTool === 'rhymes' ? 'Rhyme room' : activeTool === 'forms' ? 'Forms library' : activeTool === 'proof' ? 'Proofing' : activeTool === 'metadata' ? 'Poem metadata' : 'Scansion'}</div><div className="panel-sub">{activeTool === 'rhymes' ? 'Listen for an ending.' : activeTool === 'forms' ? 'A small shelf of structures.' : activeTool === 'proof' ? 'Suggestions, not rules.' : activeTool === 'metadata' ? 'Notes and submission history.' : 'A light touch on the beat.'}</div></div>
+              <div><div className="panel-title">{activeTool === 'rhymes' ? 'Rhyme room' : activeTool === 'forms' ? 'Forms library' : activeTool === 'proof' ? 'Proofing' : activeTool === 'metadata' ? 'Poem metadata' : 'Scansion'}</div><div className="panel-sub">{activeTool === 'rhymes' ? 'Listen for an ending.' : activeTool === 'forms' ? 'Forms, patterns, and example poems.' : activeTool === 'proof' ? 'Suggestions, not rules.' : activeTool === 'metadata' ? 'Notes and submission history.' : 'A light touch on the beat.'}</div></div>
               <button className="button ghost small" title="Panel options" aria-label="Panel options" onClick={() => setModal('settings')}><PanelRight/></button>
             </div>
             {activeTool === 'metadata' && <PoemMetadataPanel
@@ -1456,7 +1435,16 @@ function App() {
             {activeTool === 'forms' && <div className="panel-card">
               <label className="field-label" htmlFor="form-search">Browse forms</label>
               <div className="search-wrap"><Search/><input id="form-search" className="search-field" placeholder="Search forms" value={formQuery} onChange={(event) => setFormQuery(event.target.value)} data-testid="input-form-search"/></div>
-              <div style={{ marginTop: 8 }}>{filteredForms.map((form) => <div className="form-item" key={form.name}><strong>{form.name}</strong><div className="rhyme-kind" style={{ marginTop: 4 }}>{form.structure}</div><p>{form.description}</p><button className="button small" style={{ marginTop: 8 }} onClick={() => applyForm(form)} data-testid={`button-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Use as reference</button></div>)}</div>
+              <div style={{ marginTop: 8 }}>{filteredForms.map((form) => <div className="form-item" key={form.name}>
+                <strong>{form.name}</strong>
+                <div className="rhyme-kind" style={{ marginTop: 4 }}>{form.structure}</div>
+                <p>{form.description}</p>
+                <div className="form-pattern"><b>Pattern:</b> {form.example}</div>
+                <a className="form-example-link" href={form.exampleUrl} target="_blank" rel="noreferrer" aria-label={`Read example: ${form.exampleTitle}`}>
+                  Example: {form.exampleTitle}
+                </a>
+                <button className="button small" style={{ marginTop: 8 }} onClick={() => applyForm(form)} data-testid={`button-form-${form.name.toLowerCase().replace(/\s+/g, '-')}`}>Use as reference</button>
+              </div>)}</div>
             </div>}
             {activeTool === 'proof' && <div className="panel-card">
               <div className="switch-row"><div><div className="switch-title">Proofing suggestions</div><div className="switch-desc">Local checks + browser spellcheck</div></div><button className={`switch ${proofOn ? 'on' : ''}`} role="switch" aria-checked={proofOn} aria-label="Toggle proofing" onClick={() => setProofOn((value) => !value)} data-testid="toggle-proofing"/></div>
