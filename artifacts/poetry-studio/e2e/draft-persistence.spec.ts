@@ -278,6 +278,8 @@ test('saves overlapping edits as a separate copy instead of replacing newer work
 
 test('compares two saved versions without changing the active draft', async ({ page }) => {
   await page.goto('/');
+  await page.getByTestId('toggle-theme').click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
 
   await page.locator(titleInput).fill('First title');
   await page.locator(editor).fill('First opening line\nA shared ending');
@@ -299,6 +301,33 @@ test('compares two saved versions without changing the active draft', async ({ p
   await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-word.changed')).toHaveText(['First']);
   await expect(page.getByTestId('version-comparison-manuscript-2').locator('.history-diff-line').nth(0).locator('.history-diff-word:not(.changed)')).toHaveText(['opening', 'line']);
   await expect(page.locator('.history-compare-pane h3.changed')).toHaveCount(2);
+  const comparisonColors = await page.evaluate(() => {
+    const changedWord = document.querySelector<HTMLElement>(
+      '[data-testid="version-comparison-manuscript-1"] .history-diff-word.changed',
+    )!;
+    const unchangedWord = document.querySelector<HTMLElement>(
+      '[data-testid="version-comparison-manuscript-1"] .history-diff-word:not(.changed)',
+    )!;
+    const changedLine = document.querySelector<HTMLElement>(
+      '[data-testid="version-comparison-manuscript-1"] .history-diff-line.changed',
+    )!;
+    const changedTitle = document.querySelector<HTMLElement>('.history-compare-pane h3.changed')!;
+    return {
+      changedWordBackground: getComputedStyle(changedWord).backgroundColor,
+      changedWordColor: getComputedStyle(changedWord).color,
+      unchangedWordColor: getComputedStyle(unchangedWord).color,
+      changedLineBackground: getComputedStyle(changedLine).backgroundColor,
+      paneBackground: getComputedStyle(changedLine.closest('.history-compare-pane')!).backgroundColor,
+      changedTitleBackground: getComputedStyle(changedTitle).backgroundColor,
+      changedTitleColor: getComputedStyle(changedTitle).color,
+    };
+  });
+  expect(comparisonColors.changedWordBackground).toBe('rgb(232, 201, 104)');
+  expect(comparisonColors.changedWordBackground).not.toBe(comparisonColors.changedLineBackground);
+  expect(comparisonColors.changedWordColor).not.toBe(comparisonColors.unchangedWordColor);
+  expect(comparisonColors.changedLineBackground).not.toBe(comparisonColors.paneBackground);
+  expect(comparisonColors.changedTitleBackground).not.toBe(comparisonColors.paneBackground);
+  expect(comparisonColors.changedTitleColor).not.toBe(comparisonColors.changedTitleBackground);
   await expect(page.locator(titleInput)).toHaveValue('Second title');
   await expect(page.locator(editor)).toContainText('Revised opening line');
 
