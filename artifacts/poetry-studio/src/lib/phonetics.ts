@@ -12,14 +12,20 @@ type Pronunciation = {
   coda: string;
   syllables: number;
   stress: string;
+  stressDigits: string;
 };
+
+export type PoeticStressLevel = "x" | "w" | "n" | "m" | "s";
 
 export type ScannedWord = {
   word: string;
   start: number;
   end: number;
-  marks: ("u" | "/")[];
+  marks: ("u" | "/" | "\\")[];
+  stressLevels: PoeticStressLevel[];
+  lexicalStress: number[];
   syllableOffsets: number[];
+  estimated: boolean;
 };
 
 export type SyllableCountResult = {
@@ -33,6 +39,19 @@ let lexiconPromise: Promise<Map<string, Pronunciation>> | undefined;
 
 const isVowel = (phone: string) => /[012]$/.test(phone);
 const cleanPhone = (phone: string) => phone.replace(/[012]$/, "");
+const weakFunctionWords = new Set([
+  "a", "an", "the", "and", "but", "or", "nor", "for", "to", "of", "at", "by", "in", "on",
+  "with", "from", "as", "than", "if", "when", "while", "because", "since", "until", "though",
+  "although", "after", "before", "into", "upon", "under", "over", "within", "without",
+  "am", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "have",
+  "has", "had", "can", "could", "will", "would", "should", "may", "might", "must", "shall",
+  "my", "your", "his", "her", "its", "our", "their",
+]);
+const accentableFunctionWords = new Set([
+  "i", "you", "he", "she", "it", "we", "they", "me", "him", "us", "them",
+  "who", "whom", "whose", "what", "which", "where", "why", "how",
+  "this", "that", "these", "those", "not", "never", "all", "some",
+]);
 
 function parseDictionary(text: string): Pronunciation[] {
   const entries: Pronunciation[] = [];
@@ -46,12 +65,14 @@ function parseDictionary(text: string): Pronunciation[] {
     let lastStressedVowel = -1;
     let lastVowel = -1;
     const stresses: string[] = [];
+    const stressDigits: string[] = [];
 
     phones.forEach((phone, index) => {
       if (!isVowel(phone)) return;
       lastVowel = index;
       const stress = phone.at(-1) ?? "0";
       stresses.push(stress);
+      stressDigits.push(stress);
       if (stress === "1" || stress === "2") lastStressedVowel = index;
     });
 
@@ -70,6 +91,7 @@ function parseDictionary(text: string): Pronunciation[] {
       coda,
       syllables: stresses.length,
       stress: stresses.map((stress) => (stress === "1" || stress === "2" ? "/" : "u")).join(""),
+      stressDigits: stressDigits.join(""),
     });
   }
 
@@ -203,14 +225,25 @@ export async function scanLineWords(line: string): Promise<ScannedWord[]> {
     const normalized = word.toLowerCase().replace(/’/g, "'");
     const pronunciation = byWord.get(normalized);
     const fallbackSyllables = Math.max(1, word.match(/[aeiouy]+/gi)?.length ?? 1);
-    const marks = (pronunciation?.stress.split("") ??
-      Array.from({ length: fallbackSyllables }, () => "u")) as ("u" | "/")[];
+    const stressDigits = pronunciation?.stressDigits.split("") ?? Array.from({ length: fallbackSyllables }, () => "0");
+    const lexicalStress = stressDigits.map((stress) => Number(stress) || 0);
+    const stressLevels = stressDigits.map((stress): PoeticStressLevel => {
+      if (weakFunctionWords.has(normalized)) return "x";
+      if (accentableFunctionWords.has(normalized)) return "n";
+      if (stress === "1") return "s";
+      if (stress === "2") return "m";
+      return "w";
+    });
+    const marks = stressLevels.map((stress) => stress === "s" ? "/" : stress === "m" || stress === "n" ? "\\" : "u");
     return {
       word,
       start: match.index ?? 0,
       end: (match.index ?? 0) + word.length,
       marks,
+      stressLevels,
+      lexicalStress,
       syllableOffsets: estimateSyllableOffsets(word, marks.length),
+      estimated: !pronunciation,
     };
   });
 }

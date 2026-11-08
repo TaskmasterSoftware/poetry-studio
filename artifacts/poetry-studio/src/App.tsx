@@ -8,6 +8,7 @@ import {
 import BookShelf, { type ShelfBook, type ShelfPoem } from './components/BookShelf';
 import FormCheckPanel from './components/FormCheckPanel';
 import PoemMetadataPanel from './components/PoemMetadataPanel';
+import { analyzeBrowserMeter, type BrowserMeterEstimate } from './lib/browser-meter';
 import { findRhymes, findSpellingErrors, scanLineWords, type RhymeMatch, type ScannedWord } from './lib/phonetics';
 import { analyzePoemForm, type FormCheckResult } from './lib/form-check';
 import { findPoetryForm, searchPoetryForms, type FormEntry } from './lib/poetry-forms';
@@ -392,6 +393,7 @@ function App() {
   const [ignoredGrammar, setIgnoredGrammar] = useState<string[]>([]);
   const [focusedProofRange, setFocusedProofRange] = useState<{ start: number; end: number } | null>(null);
   const [scansionRows, setScansionRows] = useState<ScannedWord[][]>([]);
+  const [meterAnalyses, setMeterAnalyses] = useState<(BrowserMeterEstimate | null)[]>([]);
   const [scansionOverlayItems, setScansionOverlayItems] = useState<ScansionOverlayItem[]>([]);
   const [scanEdits, setScanEdits] = useState<Record<string, ScanLineEdit>>(() => readStorage('poetry-studio-scansion', {}));
   const [spellingErrors, setSpellingErrors] = useState<string[]>([]);
@@ -497,14 +499,24 @@ function App() {
     let current = true;
     if (!text) {
       setScansionRows([]);
+      setMeterAnalyses([]);
       return () => { current = false; };
     }
-    Promise.all(text.split('\n').map((line) => scanLineWords(line)))
-      .then((rows) => {
-        if (current) setScansionRows(rows);
+    Promise.all(text.split('\n').map(async (line) => {
+      const words = await scanLineWords(line);
+      return { words, analysis: line.trim() ? analyzeBrowserMeter(line, words) : null };
+    }))
+      .then((results) => {
+        if (current) {
+          setScansionRows(results.map((result) => result.words));
+          setMeterAnalyses(results.map((result) => result.analysis));
+        }
       })
       .catch(() => {
-        if (current) setScansionRows([]);
+        if (current) {
+          setScansionRows([]);
+          setMeterAnalyses([]);
+        }
       });
     return () => { current = false; };
   }, [text]);
@@ -1650,11 +1662,32 @@ function App() {
             </div>}
             {activeTool === 'scansion' && <div className="panel-card">
               <div className="switch-row"><div><div className="switch-title">Show marks above each line</div><div className="switch-desc">Overlay the stress guide on the poem</div></div><button className={`switch ${settings.scansion ? 'on' : ''}`} role="switch" aria-checked={settings.scansion} aria-label="Toggle scansion guide" onClick={() => setSettings((old) => ({ ...old, scansion: !old.scansion }))} data-testid="toggle-scansion"/></div>
-              <div className="notice" style={{ marginTop: 12 }}><Type/>Click a mark to cycle through u, /, and \\. Click between marks to add or remove a foot boundary. The pronunciation-based marks are a starting point—your ear has the final say.</div>
+              <div className="notice" style={{ marginTop: 12 }}><Type/>u = weak, \ = possible or secondary stress, / = strong. Click a mark to edit it; click between marks to add or remove a foot boundary.</div>
               <div className="field-label" style={{ marginTop: 16 }}>Line syllable estimates</div>
               {countedLineEntries.slice(0, 9).map(({ line, index }) => {
                 const syllableCount = scansionRows[index]?.reduce((total, word) => total + word.marks.length, 0) || lineSyllables(line);
                 return <div className="rhyme-row" key={`${index}-${line}`} style={{ alignItems: 'flex-start', gap: 8 }}><span style={{ font: '12px var(--app-font-serif)', flex: 1 }}>{line.slice(0, 34)}{line.length > 34 ? '…' : ''}</span><span className="rhyme-kind">{syllableCount} syl.</span></div>;
+              })}
+              <div className="field-label" style={{ marginTop: 18 }}>English meter estimates · Calliope-inspired</div>
+              <div className="meter-estimate-note" data-testid="meter-estimate-note">
+                <a href="https://github.com/AlekseyCalvin/Calliope-TS" target="_blank" rel="noreferrer">Calliope-TS</a>-inspired, browser-only prototype. It compares dictionary stress with common feet, but does not yet analyze syntax or full phrase stress. Fit and confidence are rough guides, not probabilities.
+              </div>
+              {countedLineEntries.slice(0, 9).map(({ line, index }) => {
+                const analysis = meterAnalyses[index];
+                const best = analysis?.best;
+                return <div className="meter-estimate-card" key={`meter-${index}-${line}`} data-testid={`meter-estimate-line-${index + 1}`}>
+                  <div className="meter-estimate-title">
+                    <span>Line {index + 1}</span>
+                    <strong>{best?.name ?? 'No clear regular meter'}</strong>
+                  </div>
+                  {best
+                    ? <div className="meter-estimate-detail"><span>{best.fit}% fit</span><span>{best.confidence}% rough confidence</span></div>
+                    : analysis?.alternatives[0] && <div className="meter-estimate-detail"><span>Closest fit: {analysis.alternatives[0].name}</span><span>{analysis.alternatives[0].fit}%</span></div>}
+                  {best?.scansion && <div className="meter-estimate-pattern" aria-label={`Stress pattern ${best.scansion}`}>{best.scansion}</div>}
+                  {analysis?.estimated && <div className="meter-estimate-caveat">Some word stresses are estimated.</div>}
+                  {best && analysis?.alternatives.length > 0 && <div className="meter-estimate-caveat">Also possible: {analysis.alternatives.slice(0, 2).map((candidate) => candidate.name).join(' · ')}</div>}
+                  {!analysis && <div className="meter-estimate-caveat">Analyzing locally…</div>}
+                </div>;
               })}
             </div>}
             <div className="panel-card">

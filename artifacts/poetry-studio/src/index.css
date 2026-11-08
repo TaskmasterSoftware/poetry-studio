@@ -178,6 +178,13 @@
 .scan-foot { color:#97a39a; opacity:.34; font-size:12px; }
 .scan-foot.active { color:#667d6d; opacity:1; font-weight:700; }
 .scan-syllable:focus-visible,.scan-foot:focus-visible { outline:2px solid #a07669; outline-offset:2px; border-radius:3px; }
+.meter-estimate-note { margin:-2px 0 8px; color:#849087; font-size:9px; line-height:1.5; }
+.meter-estimate-card { padding:8px 0; border-top:1px solid #eeece4; }
+.meter-estimate-title { display:grid; gap:3px; color:#829087; font:9px var(--app-font-mono); }
+.meter-estimate-title strong { color:#40584f; font:500 12px var(--app-font-serif); text-transform:capitalize; }
+.meter-estimate-detail { display:flex; justify-content:space-between; gap:8px; margin-top:4px; color:#71877a; font:8px var(--app-font-mono); }
+.meter-estimate-pattern { margin-top:5px; color:#8c786f; font:10px var(--app-font-mono); letter-spacing:.08em; overflow-wrap:anywhere; }
+.meter-estimate-caveat { margin-top:4px; color:#979c8d; font:8px/1.4 var(--app-font-sans); }
 ::highlight(poetry-spelling) { text-decoration: underline wavy #c45d57; text-underline-offset: 3px; }
 ::highlight(poetry-grammar) { text-decoration: underline wavy #719b75; text-underline-offset: 3px; }
 ::highlight(poetry-proof-focus) { background-color:#f1d781; color:#38321f; border-radius:2px; }
@@ -285,6 +292,11 @@
 .dark .scan-syllable.scan-stressed { color:#e2a08e; }
 .dark .scan-syllable.scan-partial { color:#c4add8; }
 .dark .scan-foot.active { color:#cad8c9; }
+.dark .meter-estimate-card { border-color:#394c43; }
+.dark .meter-estimate-note,.dark .meter-estimate-caveat,.dark .meter-estimate-title { color:#b0beb2; }
+.dark .meter-estimate-title strong { color:#dce4d8; }
+.dark .meter-estimate-detail { color:#b5c7b8; }
+.dark .meter-estimate-pattern { color:#d2b6a9; }
 .dark .button,.dark .text-field,.dark .search-field,.dark .select-tool { background:#2b4039;color:#dce3d8;border-color:#43584e; }
 .dark .button:hover { background:#354b42; }
 .dark .switch-row,.dark .rhyme-row,.dark .form-item { border-color:#394c43; }
